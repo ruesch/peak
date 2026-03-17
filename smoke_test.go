@@ -813,3 +813,76 @@ func TestSimplePlumb(t *testing.T) {
 		return false
 	})
 }
+
+func TestAutoCreationCommands(t *testing.T) {
+	// Test Get
+	t.Run("Get", func(t *testing.T) {
+		e, _ := setupTest(t, 80, 24)
+		if len(e.columns) != 0 {
+			t.Fatalf("Expected 0 columns initially, got %d", len(e.columns))
+		}
+		e.Execute(nil, nil, "Get /nonexistent")
+		if len(e.columns) == 0 {
+			t.Error("Expected Get to create a column when none exist")
+		} else if len(e.columns[0].windows) == 0 {
+			t.Error("Expected Get to create a window when none exist")
+		}
+	})
+
+	// Test Help
+	t.Run("Help", func(t *testing.T) {
+		e, s := setupTest(t, 80, 24)
+		if len(e.columns) != 0 {
+			t.Fatalf("Expected 0 columns initially, got %d", len(e.columns))
+		}
+		e.Execute(nil, nil, "Help")
+		waitFor(t, e, s, func() bool {
+			return len(e.columns) > 0 && len(e.columns[0].windows) > 0
+		})
+	})
+
+	// Test New
+	t.Run("New", func(t *testing.T) {
+		e, _ := setupTest(t, 80, 24)
+		if len(e.columns) != 0 {
+			t.Fatalf("Expected 0 columns initially, got %d", len(e.columns))
+		}
+		e.Execute(nil, nil, "New")
+		if len(e.columns) == 0 {
+			t.Error("Expected New to create a column when none exist")
+		} else if len(e.columns[0].windows) == 0 {
+			t.Error("Expected New to create a window when none exist")
+		}
+	})
+}
+
+func TestPassiveCommands(t *testing.T) {
+	// Test Look
+	t.Run("Look", func(t *testing.T) {
+		e, _ := setupTest(t, 80, 24)
+		if len(e.columns) != 0 {
+			t.Fatalf("Expected 0 columns initially, got %d", len(e.columns))
+		}
+		e.Execute(nil, nil, "Look something")
+		if len(e.columns) != 0 {
+			t.Errorf("Expected Look to NOT create anything when no windows exist, but got %d columns", len(e.columns))
+		}
+	})
+
+	// Test Plumb
+	t.Run("Plumb", func(t *testing.T) {
+		e, _ := setupTest(t, 80, 24)
+		if len(e.columns) != 0 {
+			t.Fatalf("Expected 0 columns initially, got %d", len(e.columns))
+		}
+		// Plumb a non-existent file falls back to Look
+		e.Plumb(nil, "nonexistent_file_xyz")
+
+		// OpenLine is async, so we wait a short bit.
+		time.Sleep(100 * time.Millisecond)
+
+		if len(e.columns) != 0 {
+			t.Errorf("Expected Plumb(nonexistent) to NOT create anything when no windows exist, but got %d columns", len(e.columns))
+		}
+	})
+}

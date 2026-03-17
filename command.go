@@ -96,7 +96,10 @@ func (e *Editor) getArg(win *Window, cmd string) string {
 		}
 	}
 
-	target := e.getTargetWindow(win)
+	target := win
+	if target == nil {
+		target = e.active
+	}
 	if target != nil {
 		if sel := target.body.buffer.GetSelectedText(); sel != "" {
 			return sel
@@ -189,7 +192,12 @@ func (e *Editor) getTargetColumn(col *Column, win *Window) *Column {
 	if len(e.columns) > 0 {
 		return e.columns[0]
 	}
-	return nil
+
+	// create a column if none is present
+	nc := NewColumn(e.width, 1, 0, e.height-1, e, e.Execute)
+	e.columns = append(e.columns, nc)
+	e.resize()
+	return nc
 }
 
 func normalizeError(err error) string {
@@ -205,7 +213,10 @@ func normalizeError(err error) string {
 func (e *Editor) cmdGet(win *Window, cmd string) {
 	target := e.getTargetWindow(win)
 	if target == nil {
-		return
+		col := e.getTargetColumn(nil, win)
+		target = col.AddWindow("", "")
+		e.ActivateWindow(target)
+		col.Resize(col.x, col.y, col.w, col.h)
 	}
 	arg := e.getArg(target, cmd)
 	if arg == "" {
