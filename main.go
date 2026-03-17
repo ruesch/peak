@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -73,8 +75,8 @@ func (e *Editor) Call(f func()) {
 	<-done
 }
 
-// Init sets up the initial editor state with two columns.
-func (e *Editor) Init() {
+// Init sets up the initial editor state with the specified number of columns.
+func (e *Editor) Init(numCols int, args []string) {
 	user, _ := os.UserHomeDir()
 	logDir := filepath.Join(user, ".peak")
 	os.MkdirAll(logDir, 0700)
@@ -105,19 +107,37 @@ func (e *Editor) Init() {
 	e.tag.theme = &e.theme
 	e.focusedView = e.tag
 
-	// Start with two columns
-	colLeft := NewColumn(0, 1, e.width/2, e.height-1, e, e.Execute)
-	e.columns = append(e.columns, colLeft)
+	if numCols < 1 {
+		numCols = 1
+	}
+	colWidth := e.width / numCols
+	for i := 0; i < numCols; i++ {
+		w := colWidth
+		if i == numCols-1 {
+			w = e.width - (i * colWidth)
+		}
+		col := NewColumn(i*colWidth, 1, w, e.height-1, e, e.Execute)
+		col.explicitWidth = w
+		e.columns = append(e.columns, col)
+	}
+	e.resize()
 
-	colRight := NewColumn(e.width/2, 1, e.width-e.width/2, e.height-1, e, e.Execute)
-	e.columns = append(e.columns, colRight)
+	if len(args) > 0 {
+		for _, arg := range args {
+			full := e.resolvePathWithContext(nil, arg)
+			content, isDir, err := readFileOrDir(full)
+			if err == nil {
+				e.createWindow(e.columns[0], full, content, isDir, -1, 0)
+			}
+		}
+	} else {
+		dir := getwd()
+		lastCol := e.columns[len(e.columns)-1]
+		win := e.createWindow(lastCol, dir, "", true, -1, 0)
 
-	dir := getwd()
-	win := colRight.AddWindow(" "+dir+" Get Put Undo Redo Snarf Zerox Del ", "")
-	e.ActivateWindow(win)
-
-	// Initial directory listing
-	e.Execute(colRight, win, "Get")
+		// Initial directory listing
+		e.Execute(lastCol, win, "Get")
+	}
 	e.Resize()
 }
 
@@ -494,8 +514,15 @@ func distributeSpace(totalSpace int, count int, getExplicit func(int) int, getMi
 var appEditor *Editor
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [-c columns] [file...]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	cols := flag.Int("c", 2, "number of columns")
+	flag.Parse()
+
 	appEditor = &Editor{}
-	appEditor.Init()
+	appEditor.Init(*cols, flag.Args())
 	defer appEditor.screen.Fini()
 	appEditor.Run()
 }

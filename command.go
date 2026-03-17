@@ -140,19 +140,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, fallback func
 			if err == nil {
 				target := e.getTargetColumn(nil, win)
 				if target != nil {
-					if isDir {
-						full = toDir(full)
-					}
-					tagPath := e.formatPathForTag(win, full)
-					newWin := target.AddWindow(" "+tagPath+" Get Put Undo Redo Snarf Zerox Del ", content)
-					e.ActivateWindow(newWin)
-					newWin.isDir = isDir
-					newWin.hasVersion = hasVersion(full)
-					newWin.savedVersion = newWin.body.buffer.version
-					if line >= 0 {
-						newWin.body.GotoLineCol(line, col)
-					}
-					target.Resize(target.x, target.y, target.w, target.h)
+					e.createWindow(target, full, content, isDir, line, col)
 				}
 			} else {
 				if fallback != nil && os.IsNotExist(err) {
@@ -163,6 +151,23 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, fallback func
 			}
 		}))
 	}()
+}
+
+func (e *Editor) createWindow(target *Column, full string, content string, isDir bool, line, col int) *Window {
+	if isDir {
+		full = toDir(full)
+	}
+	tagPath := e.formatPathForTag(nil, full)
+	newWin := target.AddWindow(" "+tagPath+" Get Put Undo Redo Snarf Zerox Del ", content)
+	e.ActivateWindow(newWin)
+	newWin.isDir = isDir
+	newWin.hasVersion = hasVersion(full)
+	newWin.savedVersion = newWin.body.buffer.version
+	if line >= 0 {
+		newWin.body.GotoLineCol(line, col)
+	}
+	target.Resize(target.x, target.y, target.w, target.h)
+	return newWin
 }
 
 func (e *Editor) formatPathForTag(contextWin *Window, fullPath string) string {
@@ -214,9 +219,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 	target := e.getTargetWindow(win)
 	if target == nil {
 		col := e.getTargetColumn(nil, win)
-		target = col.AddWindow("", "")
-		e.ActivateWindow(target)
-		col.Resize(col.x, col.y, col.w, col.h)
+		target = e.createWindow(col, "./untitled.txt", "", false, -1, 0)
 	}
 	arg := e.getArg(target, cmd)
 	if arg == "" {
@@ -349,8 +352,7 @@ func (e *Editor) cmdDelcol(col *Column, win *Window) {
 func (e *Editor) cmdNewCol() {
 	nc := NewColumn(e.width, 1, 0, e.height-1, e, e.Execute)
 	e.columns = append(e.columns, nc)
-	win := nc.AddWindow("", "")
-	e.ActivateWindow(win)
+	e.createWindow(nc, "./untitled.txt", "", false, -1, 0)
 	e.Resize()
 }
 
@@ -362,12 +364,9 @@ func (e *Editor) cmdNew(col *Column, win *Window, cmd string) {
 	}
 
 	targetCol := e.getTargetColumn(col, win)
-	if targetCol == nil {
-		return
+	if targetCol != nil {
+		e.createWindow(targetCol, "./untitled.txt", "", false, -1, 0)
 	}
-	newWin := targetCol.AddWindow("", "")
-	e.ActivateWindow(newWin)
-	targetCol.Resize(targetCol.x, targetCol.y, targetCol.w, targetCol.h)
 }
 
 func (e *Editor) cmdZerox(col *Column, win *Window) {
