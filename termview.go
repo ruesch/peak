@@ -7,16 +7,18 @@ import (
 	"strings"
 
 	"github.com/atotto/clipboard"
+	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"
 	"github.com/micro-editor/terminal"
 )
 
-const scrollbackMax = 1000
+const maxHistory = 1000
 
 type TermView struct {
 	x, y, w, h  int
 	state       terminal.State
 	vt          *terminal.VT
+	ptyFile     *os.File
 	closed      bool
 	onClose     func()
 	editor      *Editor
@@ -56,11 +58,12 @@ func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) 
 		cmd = exec.Command("/bin/sh", "-c", cmdStr)
 	}
 
-	vt, _, err := terminal.Start(&tv.state, cmd)
+	vt, ptyFile, err := terminal.Start(&tv.state, cmd)
 	if err != nil {
 		return nil, err
 	}
 	tv.vt = vt
+	tv.ptyFile = ptyFile
 
 	// Initial resize
 	tv.Resize(x, y, w, h)
@@ -78,7 +81,6 @@ func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) 
 				break
 			}
 
-			// Detect mode change (e.g. entering/exiting AltScreen)
 			tv.state.Lock()
 			isAlt := tv.state.Mode(terminal.ModeAltScreen)
 			changed := isAlt != (tv.lastMode&terminal.ModeAltScreen != 0)
@@ -109,15 +111,14 @@ func (tv *TermView) Draw(s tcell.Screen) {
 	tv.state.Lock()
 	defer tv.state.Unlock()
 
-	isAlt := tv.state.Mode(terminal.ModeAltScreen)
-	totalH := tv.h
-	if !isAlt {
-		totalH = scrollbackMax
+	limit := maxHistory
+	if tv.h > limit {
+		limit = tv.h
 	}
 
 	for y := 0; y < tv.h; y++ {
 		screenY := tv.scroll + y
-		if screenY >= totalH {
+		if screenY >= limit {
 			break
 		}
 		for x := 0; x < tv.w; x++ {
@@ -190,35 +191,54 @@ func (tv *TermView) ShowCursor(s tcell.Screen) {
 
 func (tv *TermView) getContentHeight() int {
 	// Must be called with lock
-	maxH := tv.h
-	_, cy := tv.state.Cursor()
-	if cy+1 > maxH {
-		maxH = cy + 1
+	if tv.state.Mode(terminal.ModeAltScreen) {
+		return tv.h
 	}
 
-	for y := scrollbackMax - 1; y >= maxH; y-- {
+	_, cy := tv.state.Cursor()
+	lastLine := cy + 1
+	if lastLine < tv.h {
+		lastLine = tv.h
+	}
+
+	limit := maxHistory
+	if tv.h > limit {
+		limit = tv.h
+	}
+
+	for y := limit - 1; y >= lastLine; y-- {
+		empty := true
 		for x := 0; x < tv.w; x++ {
-			char, _, _ := tv.state.Cell(x, y)
-			if char != ' ' && char != 0 {
-				return y + 1
+			c, _, _ := tv.state.Cell(x, y)
+			if c != 0 && c != ' ' {
+				empty = false
+				break
 			}
 		}
+		if !empty {
+			return y + 1
+		}
 	}
-	return maxH
+	return lastLine
 }
 
 func (tv *TermView) Resize(x, y, w, h int) {
 	tv.x, tv.y, tv.w, tv.h = x, y, w, h
 	if tv.vt != nil {
-		tv.state.Lock()
-		isAlt := tv.state.Mode(terminal.ModeAltScreen)
-		tv.state.Unlock()
-
-		ew, eh := w, h
-		if !isAlt {
-			eh = scrollbackMax
+		// Always keep emulator at maxHistory to avoid losing Primary buffer data
+		// when switching screens or resizing.
+		emuH := maxHistory
+		if h > emuH {
+			emuH = h
 		}
-		tv.vt.Resize(ew, eh)
+		tv.vt.Resize(w, emuH)
+
+		// Tell the process the visible size. This must be called AFTER tv.vt.Resize
+		// to override any PTY size changes the emulator might have made.
+		pty.Setsize(tv.ptyFile, &pty.Winsize{
+			Rows: uint16(h),
+			Cols: uint16(w),
+		})
 	}
 	tv.SyncScroll()
 }
@@ -244,13 +264,14 @@ func (tv *TermView) SyncScroll() {
 	}
 
 	// Bounds check
+	limit := eh - 1
+	if limit < 0 {
+		limit = 0
+	}
+	if tv.scroll > limit {
+		tv.scroll = limit
+	}
 	if tv.scroll < 0 {
-		tv.scroll = 0
-	}
-	if tv.scroll > eh-tv.h {
-		tv.scroll = eh - tv.h
-	}
-	if eh <= tv.h {
 		tv.scroll = 0
 	}
 }
@@ -265,19 +286,18 @@ func (tv *TermView) Scroll(n int) {
 	tv.state.Unlock()
 
 	if isAlt {
-		// Fullscreen apps usually handle their own scrolling
-		// If we reach here via scrollbar, we don't scroll the AltScreen buffer
 		return
 	}
 
 	tv.scroll += n
+	limit := eh - 1
+	if limit < 0 {
+		limit = 0
+	}
+	if tv.scroll > limit {
+		tv.scroll = limit
+	}
 	if tv.scroll < 0 {
-		tv.scroll = 0
-	}
-	if tv.scroll > eh-tv.h {
-		tv.scroll = eh - tv.h
-	}
-	if eh <= tv.h {
 		tv.scroll = 0
 	}
 }
@@ -290,6 +310,9 @@ func (tv *TermView) GetScroll() (scroll, total, visible int) {
 	totalH := tv.h
 	if !isAlt {
 		totalH = tv.getContentHeight()
+	}
+	if totalH < 0 {
+		totalH = 0
 	}
 	return tv.scroll, totalH, tv.h
 }
@@ -323,8 +346,16 @@ func (tv *TermView) GetSelectedText() string {
 		start, end = end, start
 	}
 
+	limit := maxHistory
+	if tv.h > limit {
+		limit = tv.h
+	}
+
 	var sb strings.Builder
 	for y := start.y; y <= end.y; y++ {
+		if y >= limit {
+			break
+		}
 		x1, x2 := 0, tv.w-1
 		if y == start.y {
 			x1 = start.x
@@ -367,9 +398,6 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 	case *tcell.EventMouse:
 		mx, my := e.Position()
 		rx, ry := mx-tv.x, my-tv.y
-		// Mouse coordinates for terminal should be relative to visible area
-		// but vt10x expects them relative to its internal screen rows.
-		// So we add scroll offset.
 		realRY := ry + tv.scroll
 
 		buttons := e.Buttons()
@@ -387,12 +415,10 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 					esc := tv.encodeSGR(btn, rx, ry, false, false, mod)
 					tv.vt.File().Write([]byte(esc))
 				} else {
-					// In AltScreen but no mouse mode, send arrow keys
 					seq := "\x1b[A"
 					if buttons&tcell.WheelDown != 0 {
 						seq = "\x1b[B"
 					}
-					// Send 3 times for faster scrolling
 					tv.vt.File().Write([]byte(seq + seq + seq))
 				}
 			} else {
@@ -418,7 +444,6 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 			if buttons != tv.lastButtons {
 				if buttons == tcell.ButtonNone {
 					isRelease = true
-					// Report release of the button that was down
 					if tv.lastButtons&tcell.Button1 != 0 {
 						btnReport = 0
 					} else if tv.lastButtons&tcell.Button3 != 0 {
@@ -427,7 +452,6 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 						btnReport = 2
 					}
 				} else {
-					// Report press of the button that just went down
 					if buttons&tcell.Button1 != 0 {
 						btnReport = 0
 					} else if buttons&tcell.Button3 != 0 {
@@ -435,7 +459,6 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 					} else if buttons&tcell.Button2 != 0 {
 						btnReport = 2
 					}
-					// Wheel already handled above
 				}
 				handled = true
 			} else if motion {
@@ -457,7 +480,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 						handled = true
 					}
 				} else if manyMode {
-					btnReport = 3 // Standard button code for "no button"
+					btnReport = 3
 					isMotion = true
 					handled = true
 				}
@@ -474,7 +497,6 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				tv.hasSelection = false
 			}
 		} else {
-			// Local selection
 			if buttons&tcell.Button1 != 0 {
 				if !tv.selecting {
 					tv.selecting = true

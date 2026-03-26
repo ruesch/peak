@@ -188,10 +188,8 @@ func (e *Editor) Run() {
 			e.Draw()
 		case <-tick:
 			if e.scrollWin != nil && time.Since(e.scrollStartTime) > 200*time.Millisecond {
-				if tv, ok := e.scrollWin.body.(*TextView); ok {
-					tv.Scroll(e.scrollDir * e.scrollAmount)
-					e.Draw()
-				}
+				e.scrollWin.body.Scroll(e.scrollDir * e.scrollAmount)
+				e.Draw()
 			}
 		}
 	}
