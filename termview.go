@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/micro-editor/terminal"
 )
@@ -19,6 +21,11 @@ type TermView struct {
 	lastMX      int
 	lastMY      int
 	lastButtons tcell.ButtonMask
+
+	selectionStart struct{ x, y int }
+	selectionEnd   struct{ x, y int }
+	hasSelection   bool
+	selecting      bool
 }
 
 func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) (*TermView, error) {
@@ -82,9 +89,35 @@ func (tv *TermView) Draw(s tcell.Screen) {
 				Foreground(tv.toTcellColor(fg, true)).
 				Background(tv.toTcellColor(bg, false))
 
+			if tv.hasSelection && tv.isSelected(x, y) {
+				style = style.Background(tv.editor.theme.SelectionBG).
+					Foreground(tv.editor.theme.SelectionFG)
+			}
+
 			s.SetContent(tv.x+x, tv.y+y, char, nil, style)
 		}
 	}
+}
+
+func (tv *TermView) isSelected(x, y int) bool {
+	start, end := tv.selectionStart, tv.selectionEnd
+	if start.y > end.y || (start.y == end.y && start.x > end.x) {
+		start, end = end, start
+	}
+
+	if y < start.y || y > end.y {
+		return false
+	}
+	if y == start.y && y == end.y {
+		return x >= start.x && x <= end.x
+	}
+	if y == start.y {
+		return x >= start.x
+	}
+	if y == end.y {
+		return x <= end.x
+	}
+	return true
 }
 
 func (tv *TermView) toTcellColor(c terminal.Color, isFG bool) tcell.Color {
@@ -138,10 +171,48 @@ func (tv *TermView) GetBuffer() *Buffer {
 	return nil
 }
 
+func (tv *TermView) GetSelectedText() string {
+	tv.state.Lock()
+	defer tv.state.Unlock()
+
+	if !tv.hasSelection {
+		return ""
+	}
+
+	start, end := tv.selectionStart, tv.selectionEnd
+	if start.y > end.y || (start.y == end.y && start.x > end.x) {
+		start, end = end, start
+	}
+
+	var sb strings.Builder
+	for y := start.y; y <= end.y; y++ {
+		x1, x2 := 0, tv.w-1
+		if y == start.y {
+			x1 = start.x
+		}
+		if y == end.y {
+			x2 = end.x
+		}
+
+		line := ""
+		for x := x1; x <= x2; x++ {
+			char, _, _ := tv.state.Cell(x, y)
+			line += string(char)
+		}
+		sb.WriteString(strings.TrimRight(line, " "))
+		if y < end.y {
+			sb.WriteRune('\n')
+		}
+	}
+	return sb.String()
+}
+
 func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 	tv.state.Lock()
 	closed := tv.closed
+	isMouseMode := tv.state.Mode(terminal.ModeMouseMask)
 	tv.state.Unlock()
+
 	if closed {
 		return false
 	}
@@ -153,9 +224,17 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 		}
 		return false
 	case *tcell.EventMouse:
-		if tv.vt != nil && tv.vt.File() != nil && tv.state.Mode(terminal.ModeMouseMask) {
-			mx, my := e.Position()
-			buttons := e.Buttons()
+		mx, my := e.Position()
+		rx, ry := mx-tv.x, my-tv.y
+		buttons := e.Buttons()
+		mod := e.Modifiers()
+		ctrlPressed := mod&tcell.ModCtrl != 0
+
+		// Use local selection if:
+		// 1. Terminal is not in mouse mode
+		// 2. Ctrl is held (user override)
+		// 3. We are already in the middle of a local selection
+		if tv.vt != nil && tv.vt.File() != nil && isMouseMode && !ctrlPressed && !tv.selecting {
 			motion := mx != tv.lastMX || my != tv.lastMY
 
 			handled := false
@@ -190,8 +269,13 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				}
 				handled = true
 			} else if motion {
+				tv.state.Lock()
+				motionMode := tv.state.Mode(terminal.ModeMouseMotion | terminal.ModeMouseMany)
+				manyMode := tv.state.Mode(terminal.ModeMouseMany)
+				tv.state.Unlock()
+
 				if buttons != tcell.ButtonNone {
-					if tv.state.Mode(terminal.ModeMouseMotion | terminal.ModeMouseMany) {
+					if motionMode {
 						if buttons&tcell.Button1 != 0 {
 							btnReport = 0
 						} else if buttons&tcell.Button3 != 0 {
@@ -202,24 +286,51 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 						isMotion = true
 						handled = true
 					}
-				} else if tv.state.Mode(terminal.ModeMouseMany) {
+				} else if manyMode {
 					btnReport = 3 // Standard button code for "no button"
 					isMotion = true
 					handled = true
 				}
 			}
 
-			tv.lastMX, tv.lastMY = mx, my
-			tv.lastButtons = buttons
+			if handled {
+				tv.state.Lock()
+				sgrMode := tv.state.Mode(terminal.ModeMouseSgr)
+				tv.state.Unlock()
 
-			if handled && tv.state.Mode(terminal.ModeMouseSgr) {
-				rx, ry := mx-tv.x, my-tv.y
-				if rx >= 0 && rx < tv.w && ry >= 0 && ry < tv.h {
-					esc := tv.encodeSGR(btnReport, rx, ry, isMotion, isRelease, e.Modifiers())
-					tv.vt.File().Write([]byte(esc))
+				if sgrMode {
+					if rx >= 0 && rx < tv.w && ry >= 0 && ry < tv.h {
+						esc := tv.encodeSGR(btnReport, rx, ry, isMotion, isRelease, mod)
+						tv.vt.File().Write([]byte(esc))
+					}
+				}
+			}
+
+			// If not overridden by Ctrl, any click should clear local selection
+			if buttons&tcell.Button1 != 0 {
+				tv.hasSelection = false
+			}
+		} else {
+			// Local selection
+			if buttons&tcell.Button1 != 0 {
+				if !tv.selecting {
+					tv.selecting = true
+					tv.hasSelection = true
+					tv.selectionStart = struct{ x, y int }{rx, ry}
+				}
+				tv.selectionEnd = struct{ x, y int }{rx, ry}
+			} else {
+				if tv.selecting {
+					tv.selecting = false
+					if tv.selectionStart == tv.selectionEnd {
+						tv.hasSelection = false
+					}
 				}
 			}
 		}
+
+		tv.lastMX, tv.lastMY = mx, my
+		tv.lastButtons = buttons
 		return false
 	}
 	return false
@@ -250,6 +361,12 @@ func (tv *TermView) encodeSGR(btn, x, y int, motion, release bool, mod tcell.Mod
 func (tv *TermView) Close() {
 	if tv.vt != nil {
 		tv.vt.Close()
+	}
+}
+
+func (tv *TermView) Snarf() {
+	if text := tv.GetSelectedText(); text != "" {
+		go clipboard.WriteAll(text)
 	}
 }
 
