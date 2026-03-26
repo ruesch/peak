@@ -326,7 +326,48 @@ func (tv *TermView) SetPos(x, y, w, h int) {
 }
 
 func (tv *TermView) GetClickWord(mx, my int) string {
-	return ""
+	tv.state.Lock()
+	defer tv.state.Unlock()
+
+	rx, ry := mx-tv.x, my-tv.y
+	realRY := ry + tv.scroll
+
+	if tv.hasSelection && tv.isSelected(rx, realRY) {
+		return tv.getSelectedText()
+	}
+
+	limit := maxHistory
+	if tv.h > limit {
+		limit = tv.h
+	}
+
+	if realRY < 0 || realRY >= limit {
+		return ""
+	}
+
+	// Find word boundaries
+	start, end := rx, rx
+	for start > 0 {
+		c, _, _ := tv.state.Cell(start-1, realRY)
+		if !IsWordChar(c) {
+			break
+		}
+		start--
+	}
+	for end < tv.w {
+		c, _, _ := tv.state.Cell(end, realRY)
+		if !IsWordChar(c) {
+			break
+		}
+		end++
+	}
+
+	var sb strings.Builder
+	for x := start; x < end; x++ {
+		c, _, _ := tv.state.Cell(x, realRY)
+		sb.WriteRune(c)
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 func (tv *TermView) GetBuffer() *Buffer {
@@ -336,7 +377,11 @@ func (tv *TermView) GetBuffer() *Buffer {
 func (tv *TermView) GetSelectedText() string {
 	tv.state.Lock()
 	defer tv.state.Unlock()
+	return tv.getSelectedText()
+}
 
+func (tv *TermView) getSelectedText() string {
+	// Must be called with lock
 	if !tv.hasSelection {
 		return ""
 	}
@@ -496,6 +541,19 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 			if buttons&tcell.Button1 != 0 {
 				tv.hasSelection = false
 			}
+
+			if (buttons&tcell.Button2 != 0 || buttons&tcell.Button3 != 0) && (ctrlPressed || !isAlt) {
+				word := tv.GetClickWord(mx, my)
+				if word != "" {
+					if buttons&tcell.Button3 != 0 { // Middle-click (Execute)
+						if tv.editor.active != nil && tv.editor.active.onExec != nil {
+							tv.editor.active.onExec(tv.editor.active.parent, tv.editor.active, word)
+						}
+					} else { // Right-click (Plumb)
+						tv.editor.active.editor.Plumb(tv.editor.active, word)
+					}
+				}
+			}
 		} else {
 			if buttons&tcell.Button1 != 0 {
 				if !tv.selecting {
@@ -504,6 +562,19 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 					tv.selectionStart = struct{ x, y int }{rx, realRY}
 				}
 				tv.selectionEnd = struct{ x, y int }{rx, realRY}
+			} else if buttons&tcell.Button2 != 0 || buttons&tcell.Button3 != 0 {
+				if ctrlPressed || !isAlt {
+					word := tv.GetClickWord(mx, my)
+					if word != "" {
+						if buttons&tcell.Button3 != 0 { // Middle-click (Execute)
+							if tv.editor.active != nil && tv.editor.active.onExec != nil {
+								tv.editor.active.onExec(tv.editor.active.parent, tv.editor.active, word)
+							}
+						} else { // Right-click (Plumb)
+							tv.editor.active.editor.Plumb(tv.editor.active, word)
+						}
+					}
+				}
 			} else {
 				if tv.selecting {
 					tv.selecting = false

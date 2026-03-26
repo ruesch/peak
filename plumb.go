@@ -36,16 +36,16 @@ func (b *Buffer) GetWordAt(x, y int) string {
 	}
 
 	start, end := x, x
-	for start > 0 && isWordChar(line[start-1]) {
+	for start > 0 && IsWordChar(line[start-1]) {
 		start--
 	}
-	for end < len(line) && isWordChar(line[end]) {
+	for end < len(line) && IsWordChar(line[end]) {
 		end++
 	}
 	return string(line[start:end])
 }
 
-func isWordChar(r rune) bool {
+func IsWordChar(r rune) bool {
 	return r != 0 && !unicode.IsSpace(r)
 }
 
