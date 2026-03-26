@@ -412,7 +412,7 @@ func (e *Editor) cmdZerox(col *Column, win *Window) {
 		newWin := target.parent.AddWindow(target.tag.buffer.GetText(), tv.buffer.GetText())
 		newTv := newWin.bodyTextView()
 		if newTv != nil {
-			newTv.scroll = tv.scroll
+			newTv.scroll.Pos = tv.scroll.Pos
 			newTv.buffer.cursor = tv.buffer.cursor
 		}
 		newWin.hasVersion = target.hasVersion
@@ -549,7 +549,7 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	}
 	buf := tv.buffer
 	dot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
-	if buf.selectionStart != nil && buf.selectionEnd != nil {
+	if buf.selection.Active {
 		s, end := buf.orderedSelection()
 		dot = Range{buf.CursorToRuneOffset(s), buf.CursorToRuneOffset(end)}
 	}

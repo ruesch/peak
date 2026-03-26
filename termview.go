@@ -26,26 +26,32 @@ type TermView struct {
 	lastMY      int
 	lastButtons tcell.ButtonMask
 
-	selectionStart struct{ x, y int }
-	selectionEnd   struct{ x, y int }
-	hasSelection   bool
-	selecting      bool
+	selection Selection
+	selecting bool
 
-	scroll     int
-	scrollable bool
+	scroll     ScrollState
 	lastMode   terminal.ModeFlag
+
+	contentHeight int
+}
+
+func (tv *TermView) IsRaw() bool {
+	tv.state.Lock()
+	defer tv.state.Unlock()
+	return tv.state.Mode(terminal.ModeAltScreen)
 }
 
 func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) (*TermView, error) {
 	tv := &TermView{
-		x:          x,
-		y:          y,
-		w:          w,
-		h:          h,
-		onClose:    onClose,
-		editor:     editor,
-		scrollable: true,
+		x:             x,
+		y:             y,
+		w:             w,
+		h:             h,
+		onClose:       onClose,
+		editor:        editor,
+		contentHeight: h,
 	}
+	tv.scroll.AutoScroll = true
 
 	var cmd *exec.Cmd
 	if cmdStr == "" {
@@ -82,6 +88,7 @@ func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) 
 			}
 
 			tv.state.Lock()
+			tv.updateContentHeight()
 			isAlt := tv.state.Mode(terminal.ModeAltScreen)
 			changed := isAlt != (tv.lastMode&terminal.ModeAltScreen != 0)
 			if changed {
@@ -117,7 +124,7 @@ func (tv *TermView) Draw(s tcell.Screen) {
 	}
 
 	for y := 0; y < tv.h; y++ {
-		screenY := tv.scroll + y
+		screenY := tv.scroll.Pos + y
 		if screenY >= limit {
 			break
 		}
@@ -128,7 +135,7 @@ func (tv *TermView) Draw(s tcell.Screen) {
 				Foreground(tv.toTcellColor(fg, true)).
 				Background(tv.toTcellColor(bg, false))
 
-			if tv.hasSelection && tv.isSelected(x, screenY) {
+			if tv.selection.Contains(x, screenY, true) {
 				style = style.Background(tv.editor.theme.SelectionBG).
 					Foreground(tv.editor.theme.SelectionFG)
 			}
@@ -136,27 +143,6 @@ func (tv *TermView) Draw(s tcell.Screen) {
 			s.SetContent(tv.x+x, tv.y+y, char, nil, style)
 		}
 	}
-}
-
-func (tv *TermView) isSelected(x, y int) bool {
-	start, end := tv.selectionStart, tv.selectionEnd
-	if start.y > end.y || (start.y == end.y && start.x > end.x) {
-		start, end = end, start
-	}
-
-	if y < start.y || y > end.y {
-		return false
-	}
-	if y == start.y && y == end.y {
-		return x >= start.x && x <= end.x
-	}
-	if y == start.y {
-		return x >= start.x
-	}
-	if y == end.y {
-		return x <= end.x
-	}
-	return true
 }
 
 func (tv *TermView) toTcellColor(c terminal.Color, isFG bool) tcell.Color {
@@ -178,7 +164,7 @@ func (tv *TermView) ShowCursor(s tcell.Screen) {
 	if tv.state.CursorVisible() {
 		cx, cy := tv.state.Cursor()
 		// Relative to view
-		ry := cy - tv.scroll
+		ry := cy - tv.scroll.Pos
 		if cx >= 0 && cx < tv.w && ry >= 0 && ry < tv.h {
 			s.ShowCursor(tv.x+cx, tv.y+ry)
 		} else {
@@ -191,8 +177,14 @@ func (tv *TermView) ShowCursor(s tcell.Screen) {
 
 func (tv *TermView) getContentHeight() int {
 	// Must be called with lock
+	return tv.contentHeight
+}
+
+func (tv *TermView) updateContentHeight() {
+	// Must be called with lock
 	if tv.state.Mode(terminal.ModeAltScreen) {
-		return tv.h
+		tv.contentHeight = tv.h
+		return
 	}
 
 	_, cy := tv.state.Cursor()
@@ -216,10 +208,11 @@ func (tv *TermView) getContentHeight() int {
 			}
 		}
 		if !empty {
-			return y + 1
+			tv.contentHeight = y + 1
+			return
 		}
 	}
-	return lastLine
+	tv.contentHeight = lastLine
 }
 
 func (tv *TermView) Resize(x, y, w, h int) {
@@ -240,6 +233,9 @@ func (tv *TermView) Resize(x, y, w, h int) {
 			Cols: uint16(w),
 		})
 	}
+	tv.state.Lock()
+	tv.updateContentHeight()
+	tv.state.Unlock()
 	tv.SyncScroll()
 }
 
@@ -247,36 +243,19 @@ func (tv *TermView) SyncScroll() {
 	tv.state.Lock()
 	defer tv.state.Unlock()
 
+	if tv.selecting {
+		return
+	}
+
 	isAlt := tv.state.Mode(terminal.ModeAltScreen)
 	if isAlt {
-		tv.scroll = 0
+		tv.scroll.Pos = 0
 		return
 	}
 
 	eh := tv.getContentHeight()
 	_, cy := tv.state.Cursor()
-
-	// Ensure cursor is visible
-	if cy < tv.scroll {
-		tv.scroll = cy
-	} else if cy >= tv.scroll+tv.h {
-		// Only follow the cursor if we were already at the bottom
-		if tv.scroll >= eh-tv.h-1 {
-			tv.scroll = cy - tv.h + 1
-		}
-	}
-
-	// Bounds check
-	limit := eh - 1
-	if limit < 0 {
-		limit = 0
-	}
-	if tv.scroll > limit {
-		tv.scroll = limit
-	}
-	if tv.scroll < 0 {
-		tv.scroll = 0
-	}
+	tv.scroll.Sync(cy, eh, tv.h)
 }
 
 func (tv *TermView) Scroll(n int) {
@@ -292,17 +271,7 @@ func (tv *TermView) Scroll(n int) {
 		return
 	}
 
-	tv.scroll += n
-	limit := eh - 1
-	if limit < 0 {
-		limit = 0
-	}
-	if tv.scroll > limit {
-		tv.scroll = limit
-	}
-	if tv.scroll < 0 {
-		tv.scroll = 0
-	}
+	tv.scroll.Scroll(n, eh, tv.h)
 }
 
 func (tv *TermView) GetScroll() (scroll, total, visible int) {
@@ -317,7 +286,7 @@ func (tv *TermView) GetScroll() (scroll, total, visible int) {
 	if totalH < 0 {
 		totalH = 0
 	}
-	return tv.scroll, totalH, tv.h
+	return tv.scroll.Pos, totalH, tv.h
 }
 
 func (tv *TermView) GetPos() (x, y, w, h int) {
@@ -328,71 +297,47 @@ func (tv *TermView) SetPos(x, y, w, h int) {
 	tv.x, tv.y, tv.w, tv.h = x, y, w, h
 }
 
-func (tv *TermView) Search(word string) int {
-	if word == "" {
-		return -1
-	}
-
+func (tv *TermView) LineCount() int {
 	tv.state.Lock()
 	defer tv.state.Unlock()
+	return tv.getContentHeight()
+}
 
-	eh := tv.getContentHeight()
-	startRX, startRY := 0, 0
-	if tv.hasSelection {
-		startRX, startRY = tv.selectionEnd.x+1, tv.selectionEnd.y
+func (tv *TermView) GetLine(y int) string {
+	tv.state.Lock()
+	defer tv.state.Unlock()
+	limit := maxHistory
+	if tv.h > limit {
+		limit = tv.h
 	}
-	if startRY >= eh {
-		startRY, startRX = 0, 0
+	if y < 0 || y >= limit {
+		return ""
 	}
+	var sb strings.Builder
+	for x := 0; x < tv.w; x++ {
+		c, _, _ := tv.state.Cell(x, y)
+		sb.WriteRune(c)
+	}
+	return sb.String()
+}
 
-	for y := startRY; y < eh; y++ {
-		var line strings.Builder
-		for x := 0; x < tv.w; x++ {
-			c, _, _ := tv.state.Cell(x, y)
-			line.WriteRune(c)
-		}
-		lineStr := line.String()
-		sx := 0
-		if y == startRY {
-			sx = startRX
-			if sx > len(lineStr) {
-				sx = len(lineStr)
-			}
-		}
-		if x := strings.Index(lineStr[sx:], word); x != -1 {
-			tv.hasSelection = true
-			tv.selectionStart = struct{ x, y int }{sx + x, y}
-			tv.selectionEnd = struct{ x, y int }{sx + x + len(word) - 1, y}
-			return y
-		}
+func (tv *TermView) Search(word string) int {
+	start := Cursor{0, 0}
+	if tv.selection.Active {
+		start = tv.selection.End
 	}
-
-	for y := 0; y <= startRY && y < eh; y++ {
-		var line strings.Builder
-		for x := 0; x < tv.w; x++ {
-			c, _, _ := tv.state.Cell(x, y)
-			line.WriteRune(c)
-		}
-		lineStr := line.String()
-		limit := len(lineStr)
-		if y == startRY {
-			limit = startRX
-		}
-		if x := strings.Index(lineStr[:limit], word); x != -1 {
-			tv.hasSelection = true
-			tv.selectionStart = struct{ x, y int }{x, y}
-			tv.selectionEnd = struct{ x, y int }{x + len(word) - 1, y}
-			return y
-		}
+	line, sel, ok := Search(tv, word, start)
+	if ok {
+		tv.selection = sel
+		return line
 	}
-
 	return -1
 }
 
 func (tv *TermView) ShowLineAt(lineNum int, vrow int) {
-	tv.scroll = lineNum - vrow
-	if tv.scroll < 0 {
-		tv.scroll = 0
+	tv.scroll.Pos = lineNum - vrow
+	if tv.scroll.Pos < 0 {
+		tv.scroll.Pos = 0
 	}
 }
 
@@ -401,9 +346,9 @@ func (tv *TermView) GetClickWord(mx, my int) string {
 	defer tv.state.Unlock()
 
 	rx, ry := mx-tv.x, my-tv.y
-	realRY := ry + tv.scroll
+	realRY := ry + tv.scroll.Pos
 
-	if tv.hasSelection && tv.isSelected(rx, realRY) {
+	if tv.selection.Contains(rx, realRY, true) {
 		return tv.getSelectedText()
 	}
 
@@ -453,14 +398,11 @@ func (tv *TermView) GetSelectedText() string {
 
 func (tv *TermView) getSelectedText() string {
 	// Must be called with lock
-	if !tv.hasSelection {
+	if !tv.selection.Active {
 		return ""
 	}
 
-	start, end := tv.selectionStart, tv.selectionEnd
-	if start.y > end.y || (start.y == end.y && start.x > end.x) {
-		start, end = end, start
-	}
+	start, end := tv.selection.Ordered()
 
 	limit := maxHistory
 	if tv.h > limit {
@@ -482,6 +424,9 @@ func (tv *TermView) getSelectedText() string {
 
 		line := ""
 		for x := x1; x <= x2; x++ {
+			if x < 0 || x >= tv.w || y < 0 || y >= limit {
+				continue
+			}
 			char, _, _ := tv.state.Cell(x, y)
 			line += string(char)
 		}
@@ -507,6 +452,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 
 	switch e := ev.(type) {
 	case *tcell.EventKey:
+		tv.scroll.AutoScroll = true
 		if tv.vt != nil && tv.vt.File() != nil {
 			tv.vt.File().Write([]byte(keyToEscSeq(e)))
 		}
@@ -514,7 +460,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 	case *tcell.EventMouse:
 		mx, my := e.Position()
 		rx, ry := mx-tv.x, my-tv.y
-		realRY := ry + tv.scroll
+		realRY := ry + tv.scroll.Pos
 
 		buttons := e.Buttons()
 		mod := e.Modifiers()
@@ -610,47 +556,21 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 			}
 
 			if buttons&tcell.Button1 != 0 {
-				tv.hasSelection = false
-			}
-
-			if (buttons&tcell.Button2 != 0 || buttons&tcell.Button3 != 0) && (ctrlPressed || !isAlt) {
-				word := tv.GetClickWord(mx, my)
-				if word != "" {
-					if buttons&tcell.Button3 != 0 { // Middle-click (Execute)
-						if tv.editor.active != nil && tv.editor.active.onExec != nil {
-							tv.editor.active.onExec(tv.editor.active.parent, tv.editor.active, word)
-						}
-					} else { // Right-click (Plumb)
-						tv.editor.active.editor.Plumb(tv.editor.active, word)
-					}
-				}
+				tv.selection.Active = false
 			}
 		} else {
 			if buttons&tcell.Button1 != 0 {
 				if !tv.selecting {
 					tv.selecting = true
-					tv.hasSelection = true
-					tv.selectionStart = struct{ x, y int }{rx, realRY}
+					tv.selection.Active = true
+					tv.selection.Start = Cursor{rx, realRY}
 				}
-				tv.selectionEnd = struct{ x, y int }{rx, realRY}
-			} else if buttons&tcell.Button2 != 0 || buttons&tcell.Button3 != 0 {
-				if ctrlPressed || !isAlt {
-					word := tv.GetClickWord(mx, my)
-					if word != "" {
-						if buttons&tcell.Button3 != 0 { // Middle-click (Execute)
-							if tv.editor.active != nil && tv.editor.active.onExec != nil {
-								tv.editor.active.onExec(tv.editor.active.parent, tv.editor.active, word)
-							}
-						} else { // Right-click (Plumb)
-							tv.editor.active.editor.Plumb(tv.editor.active, word)
-						}
-					}
-				}
+				tv.selection.End = Cursor{rx, realRY}
 			} else {
 				if tv.selecting {
 					tv.selecting = false
-					if tv.selectionStart == tv.selectionEnd {
-						tv.hasSelection = false
+					if tv.selection.Start == tv.selection.End {
+						tv.selection.Active = false
 					}
 				}
 			}

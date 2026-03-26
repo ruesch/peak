@@ -46,7 +46,7 @@ func (c *Column) AddWindow(tagText, bodyText string) *Window {
 
 func (c *Column) AddTermWindow(tagText, cmd string) (*Window, error) {
 	if tagText == "" {
-		tagPath := "win"
+		tagPath := "win+Errors"
 		if cmd != "" {
 			tagPath = cmd
 		}

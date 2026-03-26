@@ -748,7 +748,7 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 					}
 					subCtx := &Context{Editor: ctx.Editor, Column: col, Window: win, Buffer: buf, Out: ctx.Out, Log: subLog}
 					subDot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
-					if buf.selectionStart != nil {
+					if buf.selection.Active {
 						s, e := buf.orderedSelection()
 						subDot = Range{buf.CursorToRuneOffset(s), buf.CursorToRuneOffset(e)}
 					}

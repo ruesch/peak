@@ -7,11 +7,6 @@ import (
 	"github.com/atotto/clipboard"
 )
 
-// Cursor represents a 2D position in the text buffer.
-type Cursor struct {
-	x, y int
-}
-
 type bufferState struct {
 	lines   [][]rune
 	cursor  Cursor
@@ -20,14 +15,13 @@ type bufferState struct {
 
 // Buffer handles the raw text data and selection state.
 type Buffer struct {
-	lines          [][]rune
-	cursor         Cursor
-	selectionStart *Cursor
-	selectionEnd   *Cursor
-	history        []bufferState
-	redoStack      []bufferState
-	version        int
-	nextVer        int
+	lines     [][]rune
+	cursor    Cursor
+	selection Selection
+	history   []bufferState
+	redoStack []bufferState
+	version   int
+	nextVer   int
 }
 
 // NewBuffer initializes a buffer with the given string content.
@@ -81,20 +75,20 @@ func (b *Buffer) Redo() {
 }
 
 func (b *Buffer) ClearSelection() {
-	b.selectionStart = nil
-	b.selectionEnd = nil
+	b.selection.Active = false
 }
 
 func (b *Buffer) SetSelection(start, end Cursor) {
-	s, e := start, end
-	b.selectionStart, b.selectionEnd = &s, &e
+	b.selection.Start = start
+	b.selection.End = end
+	b.selection.Active = true
 }
 
 func (b *Buffer) GetSelectedText() string {
-	if b.selectionStart == nil || b.selectionEnd == nil {
+	if !b.selection.Active {
 		return ""
 	}
-	start, end := b.orderedSelection()
+	start, end := b.selection.Ordered()
 	return b.GetTextInRange(start, end)
 }
 
@@ -120,23 +114,7 @@ func (b *Buffer) GetTextInRange(start, end Cursor) string {
 }
 
 func (b *Buffer) IsSelected(x, y int) bool {
-	if b.selectionStart == nil || b.selectionEnd == nil {
-		return false
-	}
-	start, end := b.orderedSelection()
-	if y < start.y || y > end.y {
-		return false
-	}
-	if y == start.y && y == end.y {
-		return x >= start.x && x < end.x
-	}
-	if y == start.y {
-		return x >= start.x
-	}
-	if y == end.y {
-		return x < end.x
-	}
-	return true
+	return b.selection.Contains(x, y, false)
 }
 
 func (b *Buffer) Len() int {
@@ -165,11 +143,7 @@ func (b *Buffer) RunesInRange(q0, q1 int) []rune {
 }
 
 func (b *Buffer) orderedSelection() (Cursor, Cursor) {
-	start, end := *b.selectionStart, *b.selectionEnd
-	if start.y > end.y || (start.y == end.y && start.x > end.x) {
-		return end, start
-	}
-	return start, end
+	return b.selection.Ordered()
 }
 
 func (b *Buffer) GetText() string {
@@ -322,7 +296,7 @@ func (b *Buffer) Paste() {
 		return
 	}
 	b.saveState()
-	if b.selectionStart != nil && b.selectionEnd != nil {
+	if b.selection.Active {
 		start, end := b.orderedSelection()
 		b.replace(start, end, text)
 	} else {
@@ -331,7 +305,7 @@ func (b *Buffer) Paste() {
 }
 
 func (b *Buffer) Backspace() {
-	if b.selectionStart != nil && b.selectionEnd != nil {
+	if b.selection.Active {
 		b.DeleteSelection()
 		return
 	}
@@ -350,7 +324,7 @@ func (b *Buffer) Backspace() {
 }
 
 func (b *Buffer) Delete() {
-	if b.selectionStart != nil && b.selectionEnd != nil {
+	if b.selection.Active {
 		b.DeleteSelection()
 		return
 	}

@@ -295,8 +295,8 @@ func TestZeroxClick(t *testing.T) {
 		t.Errorf("Expected 2 windows after clicking Zerox, got %d", len(col.windows))
 	}
 
-	if col.windows[1].body.buffer.GetText() != "Hello Zerox" {
-		t.Errorf("Expected second window to have same text, got %q", col.windows[1].body.buffer.GetText())
+	if col.windows[1].body.GetBuffer().GetText() != "Hello Zerox" {
+		t.Errorf("Expected second window to have same text, got %q", col.windows[1].body.GetBuffer().GetText())
 	}
 }
 
@@ -566,7 +566,7 @@ func TestSimpleEdit(t *testing.T) {
 		})
 
 		// 2. Write string to buffer
-		win.body.buffer.SetText(testString)
+		win.body.GetBuffer().SetText(testString)
 		t.Logf("Set text to %q", testString)
 
 		// 3. Put
@@ -580,7 +580,7 @@ func TestSimpleEdit(t *testing.T) {
 
 		// Wait for Put to complete (savedVersion matches current version)
 		waitFor(t, e, s, func() bool {
-			return win.savedVersion == win.body.buffer.version
+			return win.savedVersion == win.body.GetBuffer().version
 		})
 
 		// 4. Close window
@@ -623,7 +623,7 @@ func TestSimpleEdit(t *testing.T) {
 			for _, c := range e.columns {
 				for _, w := range c.windows {
 					if strings.Contains(w.tag.buffer.GetText(), path) {
-						if w.body.buffer.GetText() == testString {
+						if w.body.GetBuffer().GetText() == testString {
 							win = w // for next step Del
 							return true
 						}
@@ -690,7 +690,7 @@ func TestExternalCommand(t *testing.T) {
 		return false
 	})
 
-	output := strings.TrimSpace(errWin.body.buffer.GetText())
+	output := strings.TrimSpace(errWin.body.GetBuffer().GetText())
 	t.Logf("Output from uname -a: %q", output)
 
 	// 5. Compare with Go's uname -a
@@ -701,19 +701,20 @@ func TestExternalCommand(t *testing.T) {
 	}
 
 	// 6. Add "uname -a" to +Errors window's buffer
-	errWin.body.buffer.SetText(output + "\n\nuname -a")
+	errWin.body.GetBuffer().SetText(output + "\n\nuname -a")
 	e.Draw()
 	s.Show()
 
 	// 7. Select "uname -a" in buffer
-	bodyText := errWin.body.buffer.GetText()
+	bodyText := errWin.body.GetBuffer().GetText()
 	bidx := strings.Index(bodyText, "uname -a")
-	bstart := errWin.body.buffer.RuneOffsetToCursor(bidx)
-	bend := errWin.body.buffer.RuneOffsetToCursor(bidx + len("uname -a"))
-	errWin.body.buffer.SetSelection(bstart, bend)
+	bstart := errWin.body.GetBuffer().RuneOffsetToCursor(bidx)
+	bend := errWin.body.GetBuffer().RuneOffsetToCursor(bidx + len("uname -a"))
+	errWin.body.GetBuffer().SetSelection(bstart, bend)
 
 	// 8. Run it (middle click)
-	bx, by, bfound := GetWordCoordinate(s, "uname -a", 0, errWin.body.y)
+	_, errY, _, _ := errWin.body.GetPos()
+	bx, by, bfound := GetWordCoordinate(s, "uname -a", 0, errY)
 	if !bfound {
 		t.Fatal("Could not find 'uname -a' in +Errors body")
 	}
@@ -721,7 +722,7 @@ func TestExternalCommand(t *testing.T) {
 
 	// 9. Observe result isn't changed (replaces buffer with same output)
 	waitFor(t, e, s, func() bool {
-		newOutput := strings.TrimSpace(errWin.body.buffer.GetText())
+		newOutput := strings.TrimSpace(errWin.body.GetBuffer().GetText())
 		return newOutput == expected
 	})
 }
@@ -758,13 +759,13 @@ func TestSimplePlumb(t *testing.T) {
 		return false
 	})
 
-	win.body.buffer.SetText(testString)
+	win.body.GetBuffer().SetText(testString)
 	px, py, _ := GetWordCoordinate(s, "Put", 0, win.tag.y)
 	e.HandleEvent(tcell.NewEventMouse(px, py, tcell.Button3, 0))
 
 	// Wait for Put
 	waitFor(t, e, s, func() bool {
-		return win.savedVersion == win.body.buffer.version
+		return win.savedVersion == win.body.GetBuffer().version
 	})
 
 	// Close window
@@ -790,7 +791,8 @@ func TestSimplePlumb(t *testing.T) {
 	// 3. Find 2.txt in the body and right-click it
 	e.Draw()
 	s.Show()
-	fx, fy, ffound := GetWordCoordinate(s, "2.txt", 0, dirWin.body.y)
+	_, bodyY, _, _ := dirWin.body.GetPos()
+	fx, fy, ffound := GetWordCoordinate(s, "2.txt", 0, bodyY)
 	if !ffound {
 		t.Fatal("Could not find '2.txt' in directory listing")
 	}
@@ -804,7 +806,7 @@ func TestSimplePlumb(t *testing.T) {
 			for _, w := range c.windows {
 				// We want the window that IS NOT the dirWin
 				if w != dirWin && strings.Contains(w.tag.buffer.GetText(), "2.txt") {
-					if w.body.buffer.GetText() == testString {
+					if w.body.GetBuffer().GetText() == testString {
 						return true
 					}
 				}
