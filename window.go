@@ -562,8 +562,7 @@ func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, c
 	win := newWindow(tag, parent, editor, x, y, w, h, onExec)
 
 	term, err := NewTermView(editor, cmd, x+1, y+1, w-1, h-1, func() {
-		// Auto-delete window when terminal exits?
-		// For now, let's just let it stay there closed.
+		editor.deleteWindow(win)
 	})
 	if err != nil {
 		return nil, err
