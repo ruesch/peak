@@ -12,21 +12,27 @@ func (t *State) parse(c rune) {
 	}
 	// TODO: update selection; see st.c:2450
 
-	if t.mode&ModeWrap != 0 && t.cur.state&cursorWrapNext != 0 {
+	w := t.runeWidth(c)
+	if t.mode&ModeWrap != 0 && (t.cur.state&cursorWrapNext != 0 || t.cur.x+w > t.cols) {
 		t.lines[t.cur.y][t.cur.x].mode |= attrWrap
 		t.newline(true)
 	}
 
-	if t.mode&ModeInsert != 0 && t.cur.x+1 < t.cols {
+	if t.mode&ModeInsert != 0 && t.cur.x+w < t.cols {
 		// TODO: move shiz, look at st.c:2458
 		t.logln("insert mode not implemented")
 	}
 
-	t.setChar(c, &t.cur.attr, t.cur.x, t.cur.y)
-	if t.cur.x+1 < t.cols {
-		t.moveTo(t.cur.x+1, t.cur.y)
-	} else {
-		t.cur.state |= cursorWrapNext
+	if t.cur.x+w <= t.cols {
+		t.setChar(c, &t.cur.attr, t.cur.x, t.cur.y)
+		for i := 1; i < w; i++ {
+			t.setChar(0, &t.cur.attr, t.cur.x+i, t.cur.y)
+		}
+		if t.cur.x+w < t.cols {
+			t.moveTo(t.cur.x+w, t.cur.y)
+		} else {
+			t.cur.state |= cursorWrapNext
+		}
 	}
 }
 

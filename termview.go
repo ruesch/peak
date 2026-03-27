@@ -130,6 +130,9 @@ func (tv *TermView) Draw(s tcell.Screen) {
 		}
 		for x := 0; x < tv.w; x++ {
 			char, fg, bg := tv.state.Cell(x, screenY)
+			if char == 0 {
+				continue
+			}
 
 			style := tcell.StyleDefault.
 				Foreground(tv.toTcellColor(fg, true)).
@@ -385,7 +388,9 @@ func (tv *TermView) GetClickWord(mx, my int) string {
 	var sb strings.Builder
 	for x := start; x < end; x++ {
 		c, _, _ := tv.state.Cell(x, realRY)
-		sb.WriteRune(c)
+		if c != 0 {
+			sb.WriteRune(c)
+		}
 	}
 	return strings.TrimSpace(sb.String())
 }
@@ -432,7 +437,9 @@ func (tv *TermView) getSelectedText() string {
 				continue
 			}
 			char, _, _ := tv.state.Cell(x, y)
-			line += string(char)
+			if char != 0 {
+				line += string(char)
+			}
 		}
 		sb.WriteString(strings.TrimRight(line, " "))
 		if y < end.y {

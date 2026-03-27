@@ -3,6 +3,8 @@ package terminal
 import (
 	"log"
 	"sync"
+
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -129,6 +131,17 @@ func (t *State) Lock() {
 func (t *State) Unlock() {
 	t.resetChanges()
 	t.mu.Unlock()
+}
+
+func (t *State) runeWidth(r rune) int {
+	if r < 32 {
+		return 0
+	}
+	w := uniseg.StringWidth(string(r))
+	if w == 0 {
+		return 1
+	}
+	return w
 }
 
 // Cell returns the character code, foreground color, and background
