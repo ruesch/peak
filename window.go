@@ -558,10 +558,10 @@ func newWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, onExe
 	return win
 }
 
-func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, cmd string, onExec func(*Column, *Window, string) bool) (*Window, error) {
+func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, cmd, dir string, onExec func(*Column, *Window, string) bool) (*Window, error) {
 	win := newWindow(tag, parent, editor, x, y, w, h, onExec)
 
-	term, err := NewTermView(editor, cmd, x+1, y+1, w-1, h-1, func() {
+	term, err := NewTermView(editor, cmd, dir, x+1, y+1, w-1, h-1, func() {
 		editor.deleteWindow(win)
 	})
 	if err != nil {

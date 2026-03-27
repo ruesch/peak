@@ -41,7 +41,7 @@ func (tv *TermView) IsRaw() bool {
 	return tv.state.Mode(terminal.ModeAltScreen)
 }
 
-func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) (*TermView, error) {
+func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose func()) (*TermView, error) {
 	tv := &TermView{
 		x:             x,
 		y:             y,
@@ -63,6 +63,7 @@ func NewTermView(editor *Editor, cmdStr string, x, y, w, h int, onClose func()) 
 	} else {
 		cmd = exec.Command("/bin/sh", "-c", cmdStr)
 	}
+	cmd.Dir = dir
 
 	vt, ptyFile, err := terminal.Start(&tv.state, cmd)
 	if err != nil {

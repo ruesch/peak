@@ -392,7 +392,14 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 		return
 	}
 
-	newWin, err := targetCol.AddTermWindow("", arg)
+	dir := ""
+	if win != nil {
+		dir = win.GetDir()
+	} else {
+		dir = getwd()
+	}
+
+	newWin, err := targetCol.AddTermWindow("", arg, dir)
 	if err != nil {
 		e.showError(targetCol, win, "", err.Error())
 		return
