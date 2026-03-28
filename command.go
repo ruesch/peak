@@ -411,11 +411,11 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 
 func (e *Editor) cmdZerox(col *Column, win *Window) {
 	target := e.getTargetWindow(win)
-	if target != nil {
-		tv := target.bodyTextView()
-		if tv == nil {
-			return
-		}
+	if target == nil {
+		return
+	}
+
+	if tv := target.bodyTextView(); tv != nil {
 		newWin := target.parent.AddWindow(target.tag.buffer.GetText(), tv.buffer.GetText())
 		newTv := newWin.bodyTextView()
 		if newTv != nil {
@@ -428,6 +428,8 @@ func (e *Editor) cmdZerox(col *Column, win *Window) {
 		newWin.warnedVersion = target.warnedVersion
 		e.ActivateWindow(newWin)
 		target.parent.Resize(target.parent.x, target.parent.y, target.parent.w, target.parent.h)
+	} else if _, ok := target.body.(*TermView); ok {
+		e.cmdWin(col, target, "Win")
 	}
 }
 

@@ -47,7 +47,7 @@ func (c *Column) AddWindow(tagText, bodyText string) *Window {
 func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 	if tagText == "" {
 		tagPath := join(dir, "+Errors")
-		tagText = " " + tagPath + " Get Put Del "
+		tagText = " " + tagPath + " Get Put Zerox Del "
 	}
 
 	newWin, err := NewTermWindow(tagText, c, c.editor, c.x, c.y, c.w, 0, cmd, dir, c.onExec)
