@@ -143,10 +143,7 @@ func (tv *TermView) Draw(s tcell.Screen) {
 
 func (tv *TermView) toTcellColor(c terminal.Color, isFG bool) tcell.Color {
 	if c == terminal.DefaultFG || c == terminal.DefaultBG {
-		if isFG {
-			return tv.editor.theme.BodyFG
-		}
-		return tv.editor.theme.BodyBG
+		return tcell.ColorDefault
 	}
 	if c.IsRGB() {
 		r, g, b := c.RGBComponents()
