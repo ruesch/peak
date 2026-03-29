@@ -92,16 +92,12 @@ func (e *Editor) Execute(col *Column, win *Window, cmd string) bool {
 }
 
 func (e *Editor) cmdMount(win *Window, cmd string) {
-	arg := e.getArg(win, cmd)
-	if arg == "" {
+	args := e.getArgs(win, cmd)
+	if len(args) < 2 {
+		e.showError(nil, win, "", "Usage: Mount socket path")
 		return
 	}
-	parts := strings.SplitN(arg, ":", 2)
-	if len(parts) != 2 {
-		e.showError(nil, win, "", "Usage: Mount socket:path")
-		return
-	}
-	socket, path := parts[0], parts[1]
+	socket, path := args[0], args[1]
 	err := e.ninep.Mount(socket, path)
 	if err != nil {
 		e.showError(nil, win, "", "Mount failed: "+err.Error())
@@ -109,16 +105,12 @@ func (e *Editor) cmdMount(win *Window, cmd string) {
 }
 
 func (e *Editor) cmdBind(win *Window, cmd string) {
-	arg := e.getArg(win, cmd)
-	if arg == "" {
+	args := e.getArgs(win, cmd)
+	if len(args) < 2 {
+		e.showError(nil, win, "", "Usage: Bind src dest")
 		return
 	}
-	parts := strings.SplitN(arg, ":", 2)
-	if len(parts) != 2 {
-		e.showError(nil, win, "", "Usage: Bind src:dest")
-		return
-	}
-	src, dest := parts[0], parts[1]
+	src, dest := args[0], args[1]
 	err := e.ninep.Bind(src, dest)
 	if err != nil {
 		e.showError(nil, win, "", "Bind failed: "+err.Error())
@@ -133,32 +125,43 @@ func (e *Editor) cmdUmount(win *Window, cmd string) {
 	e.ninep.Umount(arg)
 }
 
-func (e *Editor) getArg(win *Window, cmd string) string {
+func (e *Editor) getArgs(win *Window, cmd string) []string {
 	fields := strings.Fields(cmd)
 	if len(fields) > 1 {
-		return strings.Join(fields[1:], " ")
+		return fields[1:]
 	}
 
-	// Prefer selection in the current focused view
+	// Fallback to selection if no arguments provided in the command line
+	var sel string
 	if e.focusedView != nil {
-		if sel := e.focusedView.GetSelectedText(); sel != "" {
-			return sel
-		}
+		sel = e.focusedView.GetSelectedText()
 	}
 
-	target := win
-	if target == nil {
-		target = e.active
-	}
-	if target != nil {
-		if target.body != nil {
-			if sel := target.body.GetSelectedText(); sel != "" {
-				return sel
+	if sel == "" {
+		target := win
+		if target == nil {
+			target = e.active
+		}
+		if target != nil {
+			if target.body != nil {
+				sel = target.body.GetSelectedText()
+			}
+			if sel == "" && target.tag != nil {
+				sel = target.tag.GetSelectedText()
 			}
 		}
-		if sel := target.tag.GetSelectedText(); sel != "" {
-			return sel
-		}
+	}
+
+	if sel != "" {
+		return strings.Fields(sel)
+	}
+	return nil
+}
+
+func (e *Editor) getArg(win *Window, cmd string) string {
+	args := e.getArgs(win, cmd)
+	if len(args) > 0 {
+		return strings.Join(args, " ")
 	}
 	return ""
 }
