@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/aleksana/peak/internal/session"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
@@ -44,6 +47,8 @@ type TextView struct {
 	theme         *Theme
 	tabWidth      int
 	typingStart   *Cursor
+	// colorAt, when non-nil, returns a foreground color override for a rune offset.
+	colorAt func(runeOff int) (tcell.Color, bool)
 }
 
 func (tv *TextView) IsRaw() bool {
@@ -205,10 +210,18 @@ func (tv *TextView) Draw(s tcell.Screen) {
 		if tv.underlineLast && lidx == len(tv.layout)-1 {
 			lineStyle = lineStyle.Underline(true)
 		}
+		var lineRuneBase int
+		if tv.colorAt != nil {
+			lineRuneBase = tv.buffer.RuneOffsetOfPos(vl.BufferLine, vl.Start)
+		}
 		for idx := vl.Start; idx < vl.End && vcol < tv.w; idx++ {
 			r, style := line[idx], lineStyle
 			if tv.buffer.IsSelected(idx, vl.BufferLine) {
 				style = selStyle
+			} else if tv.colorAt != nil {
+				if c, ok := tv.colorAt(lineRuneBase + idx - vl.Start); ok {
+					style = style.Foreground(c)
+				}
 			}
 
 			width := tv.runeWidth(r, vcol)
@@ -518,6 +531,66 @@ type Window struct {
 	hasVersion    bool
 	savedVersion  int
 	warnedVersion int
+
+	// event subscriptions — written/read by multiple goroutines
+	eventMu   sync.Mutex
+	eventSubs []*eventSub
+
+	// current addr (rune offsets) for external tool use
+	addrQ0, addrQ1 int
+
+	// color spans applied during Draw; written by 9P goroutine, read by main
+	spansMu sync.RWMutex
+	spans   []colorSpan
+}
+
+func (win *Window) subscribeEvent() *eventSub {
+	sub := newEventSub()
+	win.eventMu.Lock()
+	win.eventSubs = append(win.eventSubs, sub)
+	win.eventMu.Unlock()
+	return sub
+}
+
+func (win *Window) unsubscribeEvent(sub *eventSub) {
+	win.eventMu.Lock()
+	for i, s := range win.eventSubs {
+		if s == sub {
+			win.eventSubs = append(win.eventSubs[:i], win.eventSubs[i+1:]...)
+			break
+		}
+	}
+	win.eventMu.Unlock()
+}
+
+// broadcastEvent delivers an event line to all open event file subscribers.
+// Safe to call from the main goroutine.
+func (win *Window) broadcastEvent(kind byte, q0, q1 int, text string) {
+	var line []byte
+	if text != "" {
+		line = []byte(fmt.Sprintf("%c %d %d %s\n", kind, q0, q1, text))
+	} else {
+		line = []byte(fmt.Sprintf("%c %d %d\n", kind, q0, q1))
+	}
+	win.eventMu.Lock()
+	subs := append([]*eventSub(nil), win.eventSubs...)
+	win.eventMu.Unlock()
+	for _, s := range subs {
+		s.deliver(line)
+	}
+}
+
+// colorAtFunc returns a closure that looks up a rune offset in the given spans.
+func (win *Window) colorAtFunc(spans []colorSpan) func(int) (tcell.Color, bool) {
+	theme := win.editor.theme
+	return func(runeOff int) (tcell.Color, bool) {
+		for _, sp := range spans {
+			if runeOff >= sp.q0 && runeOff < sp.q1 {
+				return theme.colorForAttr(sp.attr), true
+			}
+		}
+		return 0, false
+	}
 }
 
 func newWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, onExec func(*Column, *Window, string) bool) *Window {
@@ -531,15 +604,28 @@ func newWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, onExe
 }
 
 func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, cmd, dir string, onExec func(*Column, *Window, string) bool) (*Window, error) {
-	win := newWindow(tag, parent, editor, x, y, w, h, onExec)
-
-	term, err := NewTermView(editor, cmd, dir, x+1, y+1, w-1, h-1, func() {
-		editor.deleteWindow(win)
-	})
+	sess, err := session.NewLocal(cmd, dir)
 	if err != nil {
 		return nil, err
 	}
+	return newTermWindowFromSession(tag, sess, parent, editor, x, y, w, h, onExec)
+}
+
+func newTermWindowFromSession(tag string, sess session.Session, parent *Column, editor *Editor, x, y, w, h int, onExec func(*Column, *Window, string) bool) (*Window, error) {
+	win := newWindow(tag, parent, editor, x, y, w, h, onExec)
+	term, err := NewTermView(editor, sess, x+1, y+1, w-1, h-1, func() {
+		editor.deleteWindow(win)
+	})
+	if err != nil {
+		sess.Close()
+		return nil, err
+	}
 	win.body = term
+	if pty, ok := sess.(*ExternalPTY); ok {
+		pty.onResize = func(rows, cols int) {
+			win.broadcastEvent('R', rows, cols, "")
+		}
+	}
 	return win, nil
 }
 
@@ -549,6 +635,17 @@ func NewWindow(tag, body string, parent *Column, editor *Editor, x, y, w, h int,
 	tv := NewTextView(body, x+1, y+1, w-1, h-1, bodyStyle, false, true)
 	tv.theme = &editor.theme
 	win.body = tv
+	tv.buffer.onMutate = func(q0, q1Old, q1New int, text string) {
+		win.spansMu.Lock()
+		win.spans = nil
+		win.spansMu.Unlock()
+		if q1Old > q0 {
+			win.broadcastEvent('D', q0, q1Old, "")
+		}
+		if text != "" {
+			win.broadcastEvent('I', q0, q1New, text)
+		}
+	}
 	return win
 }
 
@@ -608,6 +705,24 @@ func (win *Window) SetName(name string) {
 	}
 }
 
+// clickWordOffsets returns the rune offsets [q0, q1) of word in the target view.
+func (win *Window) clickWordOffsets(target View, mx, my int, word string) (q0, q1 int) {
+	tv, ok := target.(*TextView)
+	if !ok {
+		return 0, len([]rune(word))
+	}
+	bx, by := tv.visualToBuffer(mx-tv.x, my-tv.y+tv.scroll.Pos)
+	if by < 0 || by >= len(tv.buffer.lines) {
+		return 0, len([]rune(word))
+	}
+	wStart, wEnd := GetWordBoundaries(bx, len(tv.buffer.lines[by]), func(i int) rune {
+		return tv.buffer.lines[by][i]
+	})
+	q0 = tv.buffer.RuneOffsetOfPos(by, wStart)
+	q1 = tv.buffer.RuneOffsetOfPos(by, wEnd)
+	return
+}
+
 func (win *Window) Contains(x, y int) bool {
 	return x >= win.x && x < win.x+win.w && y >= win.y && y < win.y+win.h
 }
@@ -659,6 +774,16 @@ func (win *Window) Draw(s tcell.Screen) {
 	}
 
 	win.tag.Draw(s)
+	if tv, ok := win.body.(*TextView); ok {
+		win.spansMu.RLock()
+		spans := win.spans
+		win.spansMu.RUnlock()
+		if len(spans) > 0 {
+			tv.colorAt = win.colorAtFunc(spans)
+		} else {
+			tv.colorAt = nil
+		}
+	}
 	win.body.Draw(s)
 }
 
@@ -713,9 +838,12 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 	btns := me.Buttons()
 	if btns&(tcell.Button3|tcell.Button2) != 0 && (!target.IsRaw() || me.Modifiers()&tcell.ModCtrl != 0) {
 		if word := target.GetClickWord(mx, my); word != "" {
+			q0, q1 := win.clickWordOffsets(target, mx, my, word)
 			if btns&tcell.Button3 != 0 {
+				win.broadcastEvent('x', q0, q1, word)
 				return win.onExec != nil && win.onExec(win.parent, win, word)
 			}
+			win.broadcastEvent('l', q0, q1, word)
 			return win.editor.Plumb(win, word)
 		}
 	}

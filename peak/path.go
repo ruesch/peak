@@ -201,8 +201,17 @@ func readWinPath(id int, file string) (string, bool, error) {
 	}
 	switch file {
 	case "":
-		return "body\ntag\nctl\n", true, nil
+		listing := "body\ntag\nctl\nevent\naddr\ndata\ncolor\n"
+		if tv, ok := win.body.(*TermView); ok {
+			if tv.externalPTY() != nil {
+				listing += "io\n"
+			}
+		}
+		return listing, true, nil
 	case "body":
+		if tv, ok := win.body.(*TermView); ok {
+			return tv.GetScrollback(), false, nil
+		}
 		if buf := win.body.GetBuffer(); buf != nil {
 			return buf.GetText(), false, nil
 		}
@@ -211,6 +220,25 @@ func readWinPath(id int, file string) (string, bool, error) {
 		return win.tag.buffer.GetText(), false, nil
 	case "ctl":
 		return "", false, nil
+	case "event":
+		return "", false, nil
+	case "addr":
+		return fmt.Sprintf("#%d,#%d\n", win.addrQ0, win.addrQ1), false, nil
+	case "data":
+		if buf := win.body.GetBuffer(); buf != nil {
+			runes := buf.RunesInRange(win.addrQ0, win.addrQ1)
+			return string(runes), false, nil
+		}
+		return "", false, nil
+	case "color":
+		return "", false, nil
+	case "io":
+		if tv, ok := win.body.(*TermView); ok {
+			if tv.externalPTY() != nil {
+				return "", false, nil
+			}
+		}
+		return "", false, os.ErrNotExist
 	default:
 		return "", false, os.ErrNotExist
 	}
@@ -312,6 +340,19 @@ func join(elem ...string) string {
 
 // runCommand runs a command with sh -c and returns the output and error.
 func runCommand(cmd, path, input string, winid int) (string, error) {
+	// Check for remote execution before isPeakPath, so mounts under /peak/
+	// (e.g. /peak/ssh/...) can delegate to their filesystem's "run" file.
+	if appEditor != nil && appEditor.ninep != nil {
+		if mountPath, mountFs := appEditor.ninep.FindMount(path); mountPath != "" {
+			relPath, _ := filepath.Rel(mountPath, path)
+			runF, err := mountFs.OpenFile("run", os.O_RDWR, 0)
+			if err == nil {
+				out, rerr := remoteRun(runF, relPath, cmd)
+				runF.Close()
+				return out, rerr
+			}
+		}
+	}
 	if isPeakPath(path) {
 		if appEditor != nil && appEditor.ninep != nil {
 			return appEditor.ninep.RunInternal(path, cmd, input, winid)
@@ -319,6 +360,26 @@ func runCommand(cmd, path, input string, winid int) (string, error) {
 		return "", fmt.Errorf("%s: virtual path is not initialized to run command", path)
 	}
 	return runLocalCommand(cmd, path, input, winid)
+}
+
+func remoteRun(f afero.File, relPath, cmd string) (string, error) {
+	if _, err := f.WriteAt([]byte(relPath+"\n"+cmd+"\n"), 0); err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	buf := make([]byte, 4096)
+	var off int64
+	for {
+		n, err := f.ReadAt(buf, off)
+		if n > 0 {
+			sb.Write(buf[:n])
+			off += int64(n)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return sb.String(), nil
 }
 
 // runLocalCommand executes a command on the local OS.

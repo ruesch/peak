@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -19,11 +20,15 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 		return &simpleFileInfo{name: ".", isDir: true, mode: 0555}, nil
 	case "body":
 		var size int64
-		fs.win.editor.Call(func() {
-			if buf := fs.win.body.GetBuffer(); buf != nil {
-				size = int64(len(buf.GetText()))
-			}
-		})
+		if tv, ok := fs.win.body.(*TermView); ok {
+			size = int64(len(tv.GetScrollback()))
+		} else {
+			fs.win.editor.Call(func() {
+				if buf := fs.win.body.GetBuffer(); buf != nil {
+					size = int64(len(buf.GetText()))
+				}
+			})
+		}
 		return &simpleFileInfo{name: "body", mode: 0644, size: size}, nil
 	case "tag":
 		var size int64
@@ -33,6 +38,31 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 		return &simpleFileInfo{name: "tag", mode: 0644, size: size}, nil
 	case "ctl":
 		return &simpleFileInfo{name: "ctl", mode: 0200}, nil
+	case "event":
+		return &simpleFileInfo{name: "event", mode: 0644}, nil
+	case "addr":
+		var snap []byte
+		fs.win.editor.Call(func() {
+			snap = []byte(fmt.Sprintf("#%d,#%d\n", fs.win.addrQ0, fs.win.addrQ1))
+		})
+		return &simpleFileInfo{name: "addr", mode: 0644, size: int64(len(snap))}, nil
+	case "data":
+		var size int64
+		fs.win.editor.Call(func() {
+			if buf := fs.win.body.GetBuffer(); buf != nil {
+				runes := buf.RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
+				size = int64(len([]byte(string(runes))))
+			}
+		})
+		return &simpleFileInfo{name: "data", mode: 0644, size: size}, nil
+	case "color":
+		return &simpleFileInfo{name: "color", mode: 0200}, nil
+	case "io":
+		if tv, ok := fs.win.body.(*TermView); ok {
+			if tv.externalPTY() != nil {
+				return &simpleFileInfo{name: "io", mode: 0600}, nil
+			}
+		}
 	}
 	return nil, os.ErrNotExist
 }
@@ -48,11 +78,15 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 	case "body":
 		f := &winBodyFile{win: fs.win}
 		if flag&os.O_WRONLY == 0 {
-			fs.win.editor.Call(func() {
-				if buf := fs.win.body.GetBuffer(); buf != nil {
-					f.snap = []byte(buf.GetText())
-				}
-			})
+			if tv, ok := fs.win.body.(*TermView); ok {
+				f.snap = []byte(tv.GetScrollback())
+			} else {
+				fs.win.editor.Call(func() {
+					if buf := fs.win.body.GetBuffer(); buf != nil {
+						f.snap = []byte(buf.GetText())
+					}
+				})
+			}
 		}
 		return f, nil
 	case "tag":
@@ -65,6 +99,36 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 		return f, nil
 	case "ctl":
 		return &winCtlFile{win: fs.win}, nil
+	case "event":
+		sub := fs.win.subscribeEvent()
+		return &winEventFile{win: fs.win, sub: sub}, nil
+	case "addr":
+		f := &winAddrFile{win: fs.win}
+		if flag&os.O_WRONLY == 0 {
+			fs.win.editor.Call(func() {
+				f.snap = []byte(fmt.Sprintf("#%d,#%d\n", fs.win.addrQ0, fs.win.addrQ1))
+			})
+		}
+		return f, nil
+	case "data":
+		f := &winDataFile{win: fs.win}
+		if flag&os.O_WRONLY == 0 {
+			fs.win.editor.Call(func() {
+				if buf := fs.win.body.GetBuffer(); buf != nil {
+					runes := buf.RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
+					f.snap = []byte(string(runes))
+				}
+			})
+		}
+		return f, nil
+	case "color":
+		return &winColorFile{win: fs.win}, nil
+	case "io":
+		if tv, ok := fs.win.body.(*TermView); ok {
+			if pty := tv.externalPTY(); pty != nil {
+				return &winIoFile{pty: pty}, nil
+			}
+		}
 	}
 	return nil, os.ErrNotExist
 }
@@ -124,11 +188,44 @@ func (f *winDirFile) Readdir(count int) ([]os.FileInfo, error) {
 		&simpleFileInfo{name: "body", mode: 0644},
 		&simpleFileInfo{name: "tag", mode: 0644},
 		&simpleFileInfo{name: "ctl", mode: 0200},
+		&simpleFileInfo{name: "event", mode: 0644},
+		&simpleFileInfo{name: "addr", mode: 0644},
+		&simpleFileInfo{name: "data", mode: 0644},
+		&simpleFileInfo{name: "color", mode: 0200},
+	}
+	if tv, ok := f.win.body.(*TermView); ok {
+		if tv.externalPTY() != nil {
+			all = append(all, &simpleFileInfo{name: "io", mode: 0600})
+		}
 	}
 	if count > 0 && count < len(all) {
 		return all[:count], nil
 	}
 	return all, nil
+}
+
+// ---- io file (ExternalPTY windows only) ----
+
+type winIoFile struct {
+	winStub
+	pty *ExternalPTY
+}
+
+func (f *winIoFile) Name() string { return "io" }
+func (f *winIoFile) Stat() (os.FileInfo, error) {
+	return &simpleFileInfo{name: "io", mode: 0600}, nil
+}
+func (f *winIoFile) ReadAt(p []byte, off int64) (int, error) {
+	return f.pty.ReadInput(p, off)
+}
+func (f *winIoFile) WriteAt(p []byte, _ int64) (int, error) {
+	return f.pty.WriteOutput(p)
+}
+func (f *winIoFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
+func (f *winIoFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
+func (f *winIoFile) Close() error {
+	f.pty.Close()
+	return nil
 }
 
 // ---- body ----
@@ -171,6 +268,10 @@ func (f *winBodyFile) WriteString(s string) (int, error)   { return f.WriteAt([]
 
 func (f *winBodyFile) Close() error {
 	if f.writes == nil {
+		return nil
+	}
+	if tv, ok := f.win.body.(*TermView); ok {
+		tv.session.Write(f.writes)
 		return nil
 	}
 	text := string(f.writes)

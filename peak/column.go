@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/aleksana/peak/internal/session"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -52,6 +53,18 @@ func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 	}
 
 	newWin, err := NewTermWindow(tagText, c, c.editor, c.x, c.y, c.w, 0, cmd, dir, c.onExec)
+	if err != nil {
+		return nil, err
+	}
+	newWin.ID = c.editor.nextWinID
+	c.editor.nextWinID++
+	c.windows = append(c.windows, newWin)
+	c.editor.ninep.MountWindow(newWin)
+	return newWin, nil
+}
+
+func (c *Column) AddSessionTermWindow(title string, sess session.Session) (*Window, error) {
+	newWin, err := newTermWindowFromSession(" "+title+" Zerox Del ", sess, c, c.editor, c.x, c.y, c.w, 0, c.onExec)
 	if err != nil {
 		return nil, err
 	}

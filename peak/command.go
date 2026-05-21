@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/aleksana/peak/internal/session"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -444,21 +446,82 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 		return
 	}
 
+	// If the window's path is under an external mount that exposes a "new"
+	// file, delegate session creation to that mount generically.
+	if e.ninep != nil && win != nil {
+		winPath := win.GetFilename()
+		if mountPath, mountFs := e.ninep.FindMount(winPath); mountPath != "" {
+			relPath, _ := filepath.Rel(mountPath, winPath)
+			newF, err := mountFs.OpenFile("new", os.O_RDWR, 0)
+			if err == nil {
+				go func() {
+					defer newF.Close()
+					if _, werr := newF.WriteAt([]byte(relPath), 0); werr != nil {
+						e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+							e.showError(targetCol, win, "", "remote session: "+werr.Error())
+						}))
+						return
+					}
+					buf := make([]byte, 256)
+					n, _ := newF.ReadAt(buf, 0)
+					sessRel := strings.TrimSpace(string(buf[:n]))
+					if sessRel != "" {
+						e.openRemoteTermWindow(targetCol, win, mountPath, sessRel)
+					}
+				}()
+				return
+			}
+		}
+	}
+
 	dir := ""
 	if win != nil {
 		dir = win.GetDir()
 	} else {
 		dir = getwd()
 	}
-
 	newWin, err := targetCol.AddTermWindow("", arg, dir)
 	if err != nil {
 		e.showError(targetCol, win, "", err.Error())
 		return
 	}
-
 	e.ActivateWindow(newWin)
 	targetCol.Resize(targetCol.x, targetCol.y, targetCol.w, targetCol.h)
+}
+
+func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath, sessRel string) {
+	vfsRoot := getVFS()
+	ioPath := filepath.Join(mountPath, sessRel, "io")
+	ctlPath := filepath.Join(mountPath, sessRel, "ctl")
+
+	ioF, err := vfsRoot.OpenFile(ioPath, os.O_RDWR, 0)
+	if err != nil {
+		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+			e.showError(targetCol, win, "", "remote io: "+err.Error())
+		}))
+		return
+	}
+	ctlF, err := vfsRoot.OpenFile(ctlPath, os.O_WRONLY, 0)
+	if err != nil {
+		ioF.Close()
+		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+			e.showError(targetCol, win, "", "remote ctl: "+err.Error())
+		}))
+		return
+	}
+
+	sess := session.NewRemote(ioF, ctlF)
+	title := filepath.Base(mountPath) + ":" + sessRel
+	e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		newWin, err := targetCol.AddSessionTermWindow(title, sess)
+		if err != nil {
+			sess.Close()
+			e.showError(targetCol, win, "", err.Error())
+			return
+		}
+		e.ActivateWindow(newWin)
+		targetCol.Resize(targetCol.x, targetCol.y, targetCol.w, targetCol.h)
+	}))
 }
 
 func (e *Editor) cmdZerox(col *Column, win *Window) {

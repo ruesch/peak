@@ -22,6 +22,15 @@ type Buffer struct {
 	redoStack []bufferState
 	version   int
 	nextVer   int
+
+	// onMutate is called after replace() or SetText() with pre/post rune offsets.
+	// q0=start, q1Old=old end, q1New=new end, text=inserted text.
+	// Called on the main goroutine; never nil-checked by callers.
+	onMutate func(q0, q1Old, q1New int, text string)
+
+	// line-start rune offset cache (invalidated on version change)
+	lsruns    []int
+	lsrunsVer int
 }
 
 // NewBuffer initializes a buffer with the given string content.
@@ -163,7 +172,38 @@ func (b *Buffer) mutate(fn func()) {
 	fn()
 }
 
+// ensureLSR rebuilds the line-start rune offset cache if stale.
+func (b *Buffer) ensureLSR() {
+	if b.lsruns != nil && b.lsrunsVer == b.version {
+		return
+	}
+	b.lsruns = make([]int, len(b.lines))
+	off := 0
+	for i, line := range b.lines {
+		b.lsruns[i] = off
+		off += len(line) + 1 // +1 for the implicit \n between lines
+	}
+	b.lsrunsVer = b.version
+}
+
+// RuneOffsetOfPos returns the rune offset in the buffer's flat text for position (line, col).
+func (b *Buffer) RuneOffsetOfPos(line, col int) int {
+	b.ensureLSR()
+	if line < 0 {
+		return 0
+	}
+	if line >= len(b.lsruns) {
+		line = len(b.lsruns) - 1
+		col = len(b.lines[line])
+	}
+	return b.lsruns[line] + col
+}
+
 func (b *Buffer) SetText(content string) {
+	var q1Old int
+	if b.onMutate != nil {
+		q1Old = b.Len()
+	}
 	if len(b.history) > 0 || len(b.lines) > 1 || len(b.lines[0]) > 0 {
 		b.saveState()
 	}
@@ -174,9 +214,19 @@ func (b *Buffer) SetText(content string) {
 	b.cursor = Cursor{0, 0}
 	b.ClearSelection()
 	b.version, b.nextVer = b.nextVer, b.nextVer+1
+	if b.onMutate != nil {
+		q1New := b.Len()
+		b.onMutate(0, q1Old, q1New, content)
+	}
 }
 
 func (b *Buffer) replace(start, end Cursor, content string) Cursor {
+	var q0, q1Old int
+	if b.onMutate != nil {
+		q0 = b.RuneOffsetOfPos(start.y, start.x)
+		q1Old = b.RuneOffsetOfPos(end.y, end.x)
+	}
+
 	midLines := strings.Split(content, "\n")
 	mid := make([][]rune, len(midLines))
 	for i, l := range midLines {
@@ -195,6 +245,11 @@ func (b *Buffer) replace(start, end Cursor, content string) Cursor {
 	b.cursor = Cursor{newEndCol, start.y + last}
 	b.ClearSelection()
 	b.version, b.nextVer = b.nextVer, b.nextVer+1
+
+	if b.onMutate != nil {
+		q1New := q0 + len([]rune(content))
+		b.onMutate(q0, q1Old, q1New, content)
+	}
 	return b.cursor
 }
 

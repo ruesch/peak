@@ -510,6 +510,25 @@ func distributeSpace(totalSpace int, count int, getExplicit func(int) int, getMi
 	return heights
 }
 
+func (t *Theme) colorForAttr(attr string) tcell.Color {
+	switch attr {
+	case "keyword":
+		return tcell.NewHexColor(0xcba6f7)
+	case "string":
+		return tcell.NewHexColor(0xa6e3a1)
+	case "comment":
+		return tcell.NewHexColor(0x6c7086)
+	case "type":
+		return tcell.NewHexColor(0x89b4fa)
+	case "error":
+		return tcell.NewHexColor(0xf38ba8)
+	case "dim":
+		return tcell.NewHexColor(0x585b70)
+	default:
+		return tcell.ColorDefault
+	}
+}
+
 var appEditor *Editor
 
 func main() {

@@ -133,6 +133,29 @@ func (fs *CompositeFs) Stat(name string) (os.FileInfo, error) {
 
 func (fs *CompositeFs) Name() string { return "CompositeFs" }
 
+// FindMount returns the mount path and mounted Fs for the deepest non-root
+// mount that contains name. Returns ("", nil) if none is found.
+func (fs *CompositeFs) FindMount(name string) (string, afero.Fs) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	cleanName := filepath.Clean(name)
+	bestMatch := ""
+	for m := range fs.mounts {
+		if m == "/" {
+			continue
+		}
+		if cleanName == m || strings.HasPrefix(cleanName, m+string(os.PathSeparator)) {
+			if len(m) > len(bestMatch) {
+				bestMatch = m
+			}
+		}
+	}
+	if bestMatch == "" {
+		return "", nil
+	}
+	return bestMatch, fs.mounts[bestMatch]
+}
+
 func (fs *CompositeFs) Chmod(name string, mode os.FileMode) error {
 	targetFs, relPath := fs.getFs(name)
 	return targetFs.Chmod(relPath, mode)

@@ -104,7 +104,7 @@ func (s *SftpFs) parse(name string) (string, string) {
 func (s *SftpFs) Stat(name string) (os.FileInfo, error) {
 	conn, rel := s.parse(name)
 	if conn == "" {
-		return &SimpleFileInfo{name: "ssh", isDir: true}, nil
+		return nil, os.ErrInvalid
 	}
 	client, err := s.getClient(conn)
 	if err != nil {
@@ -127,19 +127,12 @@ func (s *SftpFs) Open(name string) (afero.File, error) {
 func (s *SftpFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
 	conn, rel := s.parse(name)
 	if conn == "" {
-		var entries []os.FileInfo
-		s.conns.Range(func(k, v interface{}) bool {
-			entries = append(entries, &SimpleFileInfo{name: k.(string), isDir: true})
-			return true
-		})
-		return &MemDirFile{name: "ssh", entries: entries}, nil
+		return nil, os.ErrInvalid
 	}
-
 	client, err := s.getClient(conn)
 	if err != nil {
 		return nil, err
 	}
-
 	if rel == "" || rel == "/" {
 		return &SftpFile{client: client.sftp, name: "/", isDir: true}, nil
 	}
@@ -147,7 +140,6 @@ func (s *SftpFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, 
 	if err == nil && fi.IsDir() {
 		return &SftpFile{client: client.sftp, name: rel, isDir: true}, nil
 	}
-
 	f, err := client.sftp.OpenFile(rel, flag)
 	if err != nil {
 		return nil, err

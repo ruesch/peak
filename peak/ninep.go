@@ -44,7 +44,8 @@ func (p *NineP) Listen() {
 	os.MkdirAll(filepath.Dir(sockPath), 0700)
 	os.Remove(sockPath)
 
-	srv := vfs.NewNinePSrv(afero.NewBasePathFs(p.vfs, "/peak"))
+	inner := afero.NewBasePathFs(p.vfs, "/peak")
+	srv := vfs.NewNinePSrv(newPeakNamespaceFs(inner, p.editor))
 	go func() {
 		if err := srv.Serve("unix", sockPath); err != nil {
 			log.Printf("9P server error: %v", err)
@@ -86,4 +87,10 @@ func (p *NineP) Bind(src, dest string) error {
 
 func (p *NineP) RunInternal(path, cmd, input string, winid int) (string, error) {
 	return "", fmt.Errorf("%s: virtual path cannot execute external command", path)
+}
+
+// FindMount returns the mount path and mounted Fs for the deepest non-root
+// mount containing path. Returns ("", nil) if none found.
+func (p *NineP) FindMount(path string) (string, afero.Fs) {
+	return p.vfs.FindMount(path)
 }

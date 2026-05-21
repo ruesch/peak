@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/aleksana/peak/internal/session"
 	"github.com/aleksana/peak/peak/term"
 	"github.com/atotto/clipboard"
-	"github.com/creack/pty"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -19,7 +17,7 @@ type TermView struct {
 	BaseView
 	state       terminal.State
 	vt          *terminal.VT
-	ptyFile     *os.File
+	session     session.Session
 	closed      bool
 	onClose     func()
 	editor      *Editor
@@ -42,12 +40,13 @@ func (tv *TermView) IsRaw() bool {
 	return tv.state.Mode(terminal.ModeAltScreen)
 }
 
-func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose func()) (*TermView, error) {
+func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose func()) (*TermView, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	tv := &TermView{
 		BaseView: BaseView{
 			x: x, y: y, w: w, h: h,
 		},
+		session:       sess,
 		onClose:       onClose,
 		editor:        editor,
 		cancel:        cancel,
@@ -55,25 +54,12 @@ func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose fun
 	}
 	tv.scroll.AutoScroll = true
 
-	var cmd *exec.Cmd
-	if cmdStr == "" {
-		shell := os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-		cmd = exec.Command(shell)
-	} else {
-		cmd = exec.Command("/bin/sh", "-c", cmdStr)
-	}
-	cmd.Dir = dir
-
-	vt, ptyFile, err := terminal.Start(&tv.state, cmd)
+	vt, err := terminal.Create(&tv.state, sess)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	tv.vt = vt
-	tv.ptyFile = ptyFile
 
 	// Initial resize
 	tv.Resize(x, y, w, h)
@@ -233,10 +219,9 @@ func (tv *TermView) Resize(x, y, w, h int) {
 
 		// Tell the process the visible size. This must be called AFTER tv.vt.Resize
 		// to override any PTY size changes the emulator might have made.
-		pty.Setsize(tv.ptyFile, &pty.Winsize{
-			Rows: uint16(h),
-			Cols: uint16(w),
-		})
+		if tv.session != nil {
+			tv.session.Resize(h, w)
+		}
 	}
 	tv.state.Lock()
 	tv.updateContentHeight()
@@ -356,6 +341,29 @@ func (tv *TermView) GetBuffer() *Buffer {
 	return nil
 }
 
+// externalPTY returns the ExternalPTY backing this view, or nil for local sessions.
+func (tv *TermView) externalPTY() *ExternalPTY {
+	if pty, ok := tv.session.(*ExternalPTY); ok {
+		return pty
+	}
+	return nil
+}
+
+// GetScrollback returns the terminal scrollback buffer as plain text.
+// Each line has trailing space stripped; lines are newline-separated.
+func (tv *TermView) GetScrollback() string {
+	tv.state.Lock()
+	defer tv.state.Unlock()
+	n := tv.getContentHeight()
+	var sb strings.Builder
+	for y := 0; y < n; y++ {
+		line := strings.TrimRight(tv.getLine(y), " \x00")
+		sb.WriteString(line)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
 type termLineProvider struct {
 	tv *TermView
 }
@@ -421,8 +429,8 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				return false
 			}
 		}
-		if tv.vt != nil && tv.vt.File() != nil {
-			tv.vt.File().Write([]byte(keyToEscSeq(e)))
+		if tv.session != nil {
+			tv.session.Write([]byte(keyToEscSeq(e)))
 		}
 		return false
 	case *tcell.EventMouse:
@@ -450,7 +458,9 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				} else {
 					seq = seq + seq + seq
 				}
-				tv.vt.File().Write([]byte(seq))
+				if tv.session != nil {
+					tv.session.Write([]byte(seq))
+				}
 			} else {
 				dir := -1
 				if buttons&tcell.WheelDown != 0 {
@@ -462,7 +472,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 			return false
 		}
 
-		if tv.vt != nil && tv.vt.File() != nil && isMouseMode && !ctrlPressed && !tv.selecting {
+		if tv.session != nil && isMouseMode && !ctrlPressed && !tv.selecting {
 			motion := mx != tv.lastMX || my != tv.lastMY
 			handled := false
 			isMotion, isRelease := false, false
@@ -513,7 +523,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 
 			if handled && sgrMode && rx >= 0 && rx < tv.w && ry >= 0 && ry < tv.h {
 				esc := tv.encodeSGR(btnReport, rx, ry, isMotion, isRelease, mod)
-				tv.vt.File().Write([]byte(esc))
+				tv.session.Write([]byte(esc))
 			}
 
 			if buttons&tcell.Button1 != 0 {
@@ -576,8 +586,8 @@ func (tv *TermView) Snarf() {
 
 func (tv *TermView) Paste() {
 	text, _ := clipboard.ReadAll()
-	if text != "" && tv.vt != nil && tv.vt.File() != nil {
-		tv.vt.File().Write([]byte(text))
+	if text != "" && tv.session != nil {
+		tv.session.Write([]byte(text))
 	}
 }
 
