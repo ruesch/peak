@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ type TermView struct {
 	closed      bool
 	onClose     func()
 	editor      *Editor
+	cancel      context.CancelFunc
 	lastMX      int
 	lastMY      int
 	lastButtons tcell.ButtonMask
@@ -41,12 +43,14 @@ func (tv *TermView) IsRaw() bool {
 }
 
 func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose func()) (*TermView, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	tv := &TermView{
 		BaseView: BaseView{
 			x: x, y: y, w: w, h: h,
 		},
 		onClose:       onClose,
 		editor:        editor,
+		cancel:        cancel,
 		contentHeight: h,
 	}
 	tv.scroll.AutoScroll = true
@@ -65,6 +69,7 @@ func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose fun
 
 	vt, ptyFile, err := terminal.Start(&tv.state, cmd)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	tv.vt = vt
@@ -74,16 +79,25 @@ func NewTermView(editor *Editor, cmdStr, dir string, x, y, w, h int, onClose fun
 	tv.Resize(x, y, w, h)
 
 	go func() {
+		defer cancel()
 		for {
 			err := tv.vt.Parse()
 			if err != nil {
+				// Only call onClose if we weren't explicitly closed via Close().
+				// If ctx is already done, Close() was called first — the window
+				// is already being removed, so onClose would double-delete it.
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				tv.state.Lock()
 				tv.closed = true
 				tv.state.Unlock()
 				if tv.onClose != nil {
 					tv.editor.Call(tv.onClose)
 				}
-				break
+				return
 			}
 
 			tv.state.Lock()
@@ -548,6 +562,7 @@ func (tv *TermView) encodeSGR(btn, x, y int, motion, release bool, mod tcell.Mod
 }
 
 func (tv *TermView) Close() {
+	tv.cancel()
 	if tv.vt != nil {
 		tv.vt.Close()
 	}
