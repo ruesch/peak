@@ -636,9 +636,6 @@ func NewWindow(tag, body string, parent *Column, editor *Editor, x, y, w, h int,
 	tv.theme = &editor.theme
 	win.body = tv
 	tv.buffer.onMutate = func(q0, q1Old, q1New int, text string) {
-		win.spansMu.Lock()
-		win.spans = nil
-		win.spansMu.Unlock()
 		if q1Old > q0 {
 			win.broadcastEvent('D', q0, q1Old, "")
 		}

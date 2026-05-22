@@ -6,15 +6,12 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
-
-const highlightDebounce = 80 * time.Millisecond
 
 func watchWindow(fs afero.Fs, id int) {
 	base := fmt.Sprintf("/%d", id)
@@ -37,49 +34,52 @@ func watchWindow(fs afero.Fs, id int) {
 	defer eventF.Close()
 
 	var (
-		treeMu  sync.Mutex
-		tree    *gotreesitter.Tree
-		timerMu sync.Mutex
-		timer   *time.Timer
+		treeMu sync.Mutex
+		tree   *gotreesitter.Tree
 	)
 
-	doHighlight := func() {
-		body, err := afero.ReadFile(fs, base+"/body")
-		if err != nil || len(body) == 0 {
-			return
+	// trigger is a size-1 channel. Sending on it requests a highlight pass;
+	// if one is already pending the send is dropped, coalescing rapid edits.
+	trigger := make(chan struct{}, 1)
+
+	go func() {
+		for range trigger {
+			body, err := afero.ReadFile(fs, base+"/body")
+			if err != nil || len(body) == 0 {
+				continue
+			}
+			treeMu.Lock()
+			prev := tree
+			treeMu.Unlock()
+
+			ranges, next := hl.HighlightIncremental(body, prev)
+
+			treeMu.Lock()
+			tree = next
+			treeMu.Unlock()
+
+			writeColorSpans(fs, base, body, ranges)
 		}
-		treeMu.Lock()
-		prev := tree
-		treeMu.Unlock()
+	}()
 
-		ranges, next := hl.HighlightIncremental(body, prev)
+	// Initial highlight pass.
+	trigger <- struct{}{}
 
-		treeMu.Lock()
-		tree = next
-		treeMu.Unlock()
-
-		writeColorSpans(fs, base, body, ranges)
-	}
-
-	scheduleHighlight := func() {
-		timerMu.Lock()
-		defer timerMu.Unlock()
-		if timer != nil {
-			timer.Stop()
+	signal := func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
 		}
-		timer = time.AfterFunc(highlightDebounce, doHighlight)
 	}
-
-	// Initial highlight pass (synchronous — no need to debounce on startup).
-	doHighlight()
 
 	scanner := bufio.NewScanner(eventF)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "I ") || strings.HasPrefix(line, "D ") {
-			scheduleHighlight()
+			signal()
 		}
 	}
+	close(trigger)
 }
 
 // extractFilename returns the first whitespace-delimited token from a tag string.
@@ -124,8 +124,15 @@ func buildHighlighter(filename string) *gotreesitter.Highlighter {
 }
 
 // writeColorSpans converts highlight ranges to rune-offset color spans and
-// writes them to the window's color file.
+// writes them to the window's color file. It always opens and closes the file
+// so that an empty result clears stale spans from a previous highlight pass.
 func writeColorSpans(fs afero.Fs, base string, body []byte, ranges []gotreesitter.HighlightRange) {
+	colorF, err := fs.OpenFile(base+"/color", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	defer colorF.Close()
+
 	if len(ranges) == 0 {
 		return
 	}
@@ -149,16 +156,9 @@ func writeColorSpans(fs afero.Fs, base string, body []byte, ranges []gotreesitte
 		}
 		fmt.Fprintf(&sb, "%d %d %s\n", q0, q1, attr)
 	}
-	if sb.Len() == 0 {
-		return
+	if sb.Len() > 0 {
+		colorF.WriteString(sb.String())
 	}
-
-	colorF, err := fs.OpenFile(base+"/color", os.O_WRONLY, 0)
-	if err != nil {
-		return
-	}
-	colorF.WriteString(sb.String())
-	colorF.Close()
 }
 
 // buildByteToRune builds a slice where index i holds the rune offset

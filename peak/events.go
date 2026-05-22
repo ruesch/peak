@@ -248,9 +248,14 @@ func (f *winDataFile) Close() error {
 
 // ---- winColorFile ----
 
+// winColorFile accumulates all written bytes in buf and atomically replaces
+// the window's color spans on Close. This avoids both partial-state visibility
+// during chunked 9P writes and the white-flash caused by clearing spans on
+// every mutation.
 type winColorFile struct {
 	winStub
 	win *Window
+	buf strings.Builder
 }
 
 func (f *winColorFile) Name() string { return "color" }
@@ -259,10 +264,16 @@ func (f *winColorFile) Stat() (os.FileInfo, error) {
 	return &simpleFileInfo{name: "color", mode: 0200}, nil
 }
 
-// WriteAt parses "q0 q1 attr\n" lines and appends to the window's color spans.
 func (f *winColorFile) WriteAt(p []byte, _ int64) (int, error) {
+	f.buf.Write(p)
+	return len(p), nil
+}
+
+// Close parses the accumulated "q0 q1 attr\n" lines and replaces the
+// window's spans atomically. An empty write clears all spans.
+func (f *winColorFile) Close() error {
 	var newSpans []colorSpan
-	for _, line := range strings.Split(string(p), "\n") {
+	for _, line := range strings.Split(f.buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -278,12 +289,10 @@ func (f *winColorFile) WriteAt(p []byte, _ int64) (int, error) {
 		}
 		newSpans = append(newSpans, colorSpan{q0, q1, parts[2]})
 	}
-	if len(newSpans) > 0 {
-		f.win.spansMu.Lock()
-		f.win.spans = append(f.win.spans, newSpans...)
-		f.win.spansMu.Unlock()
-	}
-	return len(p), nil
+	f.win.spansMu.Lock()
+	f.win.spans = newSpans
+	f.win.spansMu.Unlock()
+	return nil
 }
 
 func (f *winColorFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
