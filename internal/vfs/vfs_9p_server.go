@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -10,9 +11,9 @@ import (
 	"path"
 	"sync"
 
+	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/knusbaum/go9p"
 	"github.com/knusbaum/go9p/proto"
-	"github.com/aleksana/peak/internal/vfs/afero"
 )
 
 // Qid type constants
@@ -382,13 +383,69 @@ func (s *NinePSrv) Serve(network, address string) error {
 	return nil
 }
 
+// connSrv wraps NinePSrv so that ServeListener can supply the NinePConn
+// that go9p creates internally via NewConn.
+type connSrv struct {
+	*NinePSrv
+	conn *NinePConn
+}
+
+func (cs *connSrv) NewConn() go9p.Conn { return cs.conn }
+
 func (s *NinePSrv) ServeListener(l net.Listener) {
 	for {
-		conn, err := l.Accept()
+		c, err := l.Accept()
 		if err != nil {
 			return
 		}
-		go go9p.ServeReadWriter(conn, conn, s)
+		go func(c net.Conn) {
+			defer c.Close()
+
+			conn := &NinePConn{
+				srv:       s,
+				fids:      make(map[uint32]string),
+				openFiles: make(map[uint32]afero.File),
+			}
+			cs := &connSrv{NinePSrv: s, conn: conn}
+
+			// Pipe the connection through so we get a hook when the peer
+			// drops. go9p.ServeReadWriter dispatches 9P calls in worker
+			// goroutines and only returns after all workers exit. One of
+			// those workers can be permanently blocked in a blocking Read
+			// (e.g. the window event file). conn.cleanup() unblocks it by
+			// closing the subscription, but it can only be called once the
+			// connection is known to be dead — not after the workers finish.
+			//
+			// Solution: copy the raw bytes through a pipe. When the real
+			// connection drops, io.Copy returns, we call conn.cleanup()
+			// (which unblocks the stuck worker), then close the write end of
+			// the pipe so that ServeReadWriter sees EOF and the workers drain.
+			pr, pw := io.Pipe()
+			go func() {
+				io.Copy(pw, c)
+				conn.cleanup()
+				pw.Close()
+			}()
+
+			go9p.ServeReadWriter(bufio.NewReader(pr), c, cs)
+			pr.Close()
+		}(c)
+	}
+}
+
+// cleanup closes all files remaining open when a client drops without sending
+// Clunk (e.g. process killed). This releases event subscriptions so that any
+// worker goroutine blocked on a blocking Read is unblocked and can exit.
+func (c *NinePConn) cleanup() {
+	c.mu.Lock()
+	files := make([]afero.File, 0, len(c.openFiles))
+	for _, f := range c.openFiles {
+		files = append(files, f)
+	}
+	c.openFiles = make(map[uint32]afero.File)
+	c.mu.Unlock()
+	for _, f := range files {
+		f.Close()
 	}
 }
 

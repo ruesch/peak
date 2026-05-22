@@ -53,11 +53,24 @@ func watchEvents(fs afero.Fs) {
 		}
 	}
 
+	// Open the event stream before snapshotting so we don't miss windows
+	// that open during the bootstrap.
 	eventF, err := fs.Open("/event")
 	if err != nil {
 		log.Fatalf("open /event: %v", err)
 	}
 	defer eventF.Close()
+
+	// Bootstrap: start watching windows that are already open.
+	if entries, err := afero.ReadDir(fs, "/"); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				if id, err := strconv.Atoi(e.Name()); err == nil {
+					start(id)
+				}
+			}
+		}
+	}
 
 	scanner := bufio.NewScanner(eventF)
 	for scanner.Scan() {

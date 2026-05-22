@@ -163,6 +163,9 @@ func (f *winEventFile) Close() error {
 	if f.sub != nil {
 		f.win.unsubscribeEvent(f.sub)
 		f.sub.close()
+		f.win.spansMu.Lock()
+		f.win.spans = nil
+		f.win.spansMu.Unlock()
 	}
 	return nil
 }
