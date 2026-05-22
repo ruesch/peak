@@ -494,8 +494,16 @@ func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath,
 	ioPath := filepath.Join(mountPath, sessRel, "io")
 	ctlPath := filepath.Join(mountPath, sessRel, "ctl")
 
-	ioF, err := vfsRoot.OpenFile(ioPath, os.O_RDWR, 0)
+	ioRead, err := vfsRoot.OpenFile(ioPath, os.O_RDONLY, 0)
 	if err != nil {
+		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+			e.showError(targetCol, win, "", "remote io: "+err.Error())
+		}))
+		return
+	}
+	ioWrite, err := vfsRoot.OpenFile(ioPath, os.O_WRONLY, 0)
+	if err != nil {
+		ioRead.Close()
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			e.showError(targetCol, win, "", "remote io: "+err.Error())
 		}))
@@ -503,14 +511,15 @@ func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath,
 	}
 	ctlF, err := vfsRoot.OpenFile(ctlPath, os.O_WRONLY, 0)
 	if err != nil {
-		ioF.Close()
+		ioRead.Close()
+		ioWrite.Close()
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			e.showError(targetCol, win, "", "remote ctl: "+err.Error())
 		}))
 		return
 	}
 
-	sess := session.NewRemote(ioF, ctlF)
+	sess := session.NewRemote(ioRead, ioWrite, ctlF)
 	title := filepath.Base(mountPath) + ":" + sessRel
 	e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 		newWin, err := targetCol.AddSessionTermWindow(title, sess)
