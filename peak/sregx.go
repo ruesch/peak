@@ -335,29 +335,42 @@ func (cp *cmdParser) parse(nest int) (*Cmd, error) {
 	i := cmdlookup(c)
 	if i >= 0 {
 		ct := &cmdtab[i]
+		if ct.defaddr == 0 && cmd.addr != nil {
+			return nil, fmt.Errorf("command takes no address")
+		}
 		if ct.count != 0 {
 			cmd.num = cp.getnum(ct.count == 2)
 		}
 		if ct.regexp {
-			cp.skipbl()
-			delim := cp.getch()
-			if delim == '\n' || delim < 0 {
-				return nil, fmt.Errorf("address missing")
-			}
-			re, err := cp.getregexp(delim)
-			if err != nil {
-				return nil, err
-			}
-			cmd.re = re
-			if ct.cmdc == 's' {
-				cmd.text, err = cp.getrhs(delim)
+			// x, y, X allow a missing pattern; Y requires one (sam spec).
+			isLooper := cmd.cmdc == 'x' || cmd.cmdc == 'y' || cmd.cmdc == 'X'
+			c := cp.nextc() // peek without advancing
+			if isLooper && (c == ' ' || c == '\t' || c == '\n') {
+				// no pattern: x/y → linelooper, X → all files
+			} else {
+				cp.skipbl()
+				delim := cp.getch()
+				if delim == '\n' || delim < 0 {
+					return nil, fmt.Errorf("address missing")
+				}
+				if !okdelim(delim) {
+					return nil, fmt.Errorf("bad delimiter %c", delim)
+				}
+				re, err := cp.getregexp(delim)
 				if err != nil {
 					return nil, err
 				}
-				if cp.nextc() == delim {
-					cp.getch()
-					if cp.nextc() == 'g' {
-						cmd.flag = cp.getch()
+				cmd.re = re
+				if ct.cmdc == 's' {
+					cmd.text, err = cp.getrhs(delim)
+					if err != nil {
+						return nil, err
+					}
+					if cp.nextc() == delim {
+						cp.getch()
+						if cp.nextc() == 'g' {
+							cmd.flag = cp.getch()
+						}
 					}
 				}
 			}
@@ -448,12 +461,25 @@ func (cp *cmdParser) collecttext() (string, error) {
 		var buf strings.Builder
 		for {
 			var line strings.Builder
+			eof := false
 			for {
 				c := cp.getch()
-				if c <= 0 || c == '\n' {
+				if c <= 0 {
+					eof = true
+					break
+				}
+				if c == '\n' {
 					break
 				}
 				line.WriteRune(c)
+			}
+			if eof {
+				// EOF without "." terminator: include any trailing partial line.
+				if line.Len() > 0 {
+					buf.WriteString(line.String())
+					buf.WriteRune('\n')
+				}
+				break
 			}
 			if line.String() == "." {
 				break
@@ -522,6 +548,15 @@ func cmdlookup(c rune) int {
 	return -1
 }
 
+// okdelim returns true if c can be used as a regexp delimiter.
+// Alphanumeric characters and backslash are not valid delimiters.
+func okdelim(c rune) bool {
+	return !(c == '\\' ||
+		('a' <= c && c <= 'z') ||
+		('A' <= c && c <= 'Z') ||
+		('0' <= c && c <= '9'))
+}
+
 func compileRegex(pat string) (*regexp.Regexp, error) {
 	return regexp.CompileAcme(pat)
 }
@@ -544,7 +579,6 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 	case 'p':
 		if ctx.Out != nil {
 			ctx.Out.Write([]byte(string(runes[addr.q0:addr.q1])))
-			ctx.Out.Write([]byte{'\n'})
 		}
 		return addr, true
 	case 'b':
@@ -644,6 +678,23 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 		}
 		return addr, true
 	case 'x', 'y':
+		if cmd.re == "" {
+			// linelooper: iterate over each line's content (without the \n)
+			p := addr.q0
+			for p < addr.q1 {
+				q := p
+				for q < addr.q1 && runes[q] != '\n' {
+					q++
+				}
+				cmd.cmd.Execute(ctx, Range{p, q})
+				if q < addr.q1 {
+					p = q + 1
+				} else {
+					break
+				}
+			}
+			return addr, true
+		}
 		re, err := compileRegex(cmd.re)
 		if err != nil {
 			return addr, false
@@ -732,14 +783,24 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 		}
 		return addr, true
 	case 'X', 'Y':
-		re, err := compileRegex(cmd.re)
-		if err != nil {
-			return addr, false
+		// X with no pattern matches all files (sam spec); Y always requires a pattern.
+		var re *regexp.Regexp
+		if cmd.re != "" {
+			var err error
+			re, err = compileRegex(cmd.re)
+			if err != nil {
+				return addr, false
+			}
 		}
 		for _, col := range ctx.Editor.columns {
 			for _, win := range col.windows {
 				filename := win.GetFilename()
-				match := re.MatchString(filename)
+				var match bool
+				if re == nil {
+					match = true // X with no pattern → all files
+				} else {
+					match = re.MatchString(filename)
+				}
 				if (cmd.cmdc == 'X' && match) || (cmd.cmdc == 'Y' && !match) {
 					subLog := &Elog{}
 					buf := win.body.GetBuffer()
@@ -759,12 +820,19 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 		}
 		return addr, true
 	case 'u':
-		for i := 0; i < cmd.num; i++ {
-			ctx.Buffer.Undo()
+		n := cmd.num
+		if n < 0 {
+			for i := 0; i > n; i-- {
+				ctx.Buffer.Redo()
+			}
+		} else {
+			for i := 0; i < n; i++ {
+				ctx.Buffer.Undo()
+			}
 		}
 		return addr, true
 	case 'w':
-		filename := cmd.text
+		filename := strings.TrimSpace(cmd.text)
 		if filename == "" {
 			filename = ctx.Window.GetFilename()
 		}
@@ -778,7 +846,48 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 		return addr, true
 	case '=':
 		if ctx.Out != nil {
-			ctx.Out.Write([]byte(fmt.Sprintf("#%d,#%d\n", addr.q0, addr.q1)))
+			prefix := ""
+			if ctx.Window != nil && ctx.Window.GetFilename() != "" {
+				prefix = ctx.Window.GetFilename() + ":"
+			}
+			mode := strings.TrimSpace(cmd.text)
+			switch mode {
+			case "#":
+				// char offsets: #q0,#q1
+				s := fmt.Sprintf("#%d", addr.q0)
+				if addr.q1 != addr.q0 {
+					s += fmt.Sprintf(",#%d", addr.q1)
+				}
+				ctx.Out.Write([]byte(prefix + s + "\n"))
+			case "+":
+				// line+char: l1+#c1,l2+#c2
+				l1, c1 := nlcount(runes, 0, addr.q0)
+				l1++
+				l2, c2 := nlcount(runes, addr.q0, addr.q1)
+				l2 += l1
+				if l2 == l1 {
+					c2 += c1
+				}
+				s := fmt.Sprintf("%d+#%d", l1, c1)
+				if l2 != l1 {
+					s += fmt.Sprintf(",%d+#%d", l2, c2)
+				}
+				ctx.Out.Write([]byte(prefix + s + "\n"))
+			default:
+				// line numbers (default bare =)
+				l1, _ := nlcount(runes, 0, addr.q0)
+				l1++
+				l2, _ := nlcount(runes, addr.q0, addr.q1)
+				l2 += l1
+				if addr.q1 > addr.q0 && addr.q1 <= len(runes) && runes[addr.q1-1] == '\n' {
+					l2--
+				}
+				s := fmt.Sprintf("%d", l1)
+				if l2 != l1 {
+					s += fmt.Sprintf(",%d", l2)
+				}
+				ctx.Out.Write([]byte(prefix + s + "\n"))
+			}
 		}
 		return addr, true
 	case '!':
@@ -800,7 +909,7 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 	case '{':
 		curr := cmd.cmd
 		for curr != nil {
-			addr, _ = curr.Execute(ctx, addr)
+			curr.Execute(ctx, addr)
 			curr = curr.next
 		}
 		return addr, true
@@ -825,6 +934,22 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 		return addr, true
 	}
 	return addr, true
+}
+
+// nlcount counts newlines in runes[q0:q1] and returns the number of newlines
+// and the rune count after the last newline (column offset of q1).
+func nlcount(runes []rune, q0, q1 int) (nl, col int) {
+	if q1 > len(runes) {
+		q1 = len(runes)
+	}
+	start := q0
+	for i := q0; i < q1; i++ {
+		if runes[i] == '\n' {
+			nl++
+			start = i + 1
+		}
+	}
+	return nl, q1 - start
 }
 
 func expand(repl string, text []rune, match []int) string {
