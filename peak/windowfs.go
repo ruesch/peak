@@ -395,9 +395,9 @@ func ctlSnap(win *Window) []byte {
 	var tagLen, bodyLen, width, maxtab int
 	isDir, isDirty := 0, 0
 	win.lk.Lock()
-	tagLen = len([]rune(win.tag.buffer.GetText()))
+	tagLen = win.tag.buffer.Len()
 	if buf := win.body.GetBuffer(); buf != nil {
-		bodyLen = len([]rune(buf.GetText()))
+		bodyLen = buf.Len()
 	}
 	if win.isDir {
 		isDir = 1

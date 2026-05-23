@@ -2,7 +2,6 @@ package main
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"github.com/atotto/clipboard"
 )
@@ -133,28 +132,38 @@ func (b *Buffer) IsSelected(x, y int) bool {
 }
 
 func (b *Buffer) Len() int {
-	count := 0
-	for i, line := range b.lines {
-		count += len(line)
-		if i < len(b.lines)-1 {
-			count++ // \n
-		}
-	}
-	return count
+	b.ensureLSR()
+	last := len(b.lsruns) - 1
+	return b.lsruns[last] + len(b.lines[last])
 }
 
 func (b *Buffer) RunesInRange(q0, q1 int) []rune {
-	all := b.GetRunes()
 	if q0 < 0 {
 		q0 = 0
 	}
-	if q1 > len(all) {
-		q1 = len(all)
+	if n := b.Len(); q1 > n {
+		q1 = n
 	}
-	if q0 > q1 {
+	if q0 >= q1 {
 		return nil
 	}
-	return all[q0:q1]
+	start := b.RuneOffsetToCursor(q0)
+	end := b.RuneOffsetToCursor(q1)
+	var result []rune
+	for y := start.y; y <= end.y; y++ {
+		x1, x2 := 0, len(b.lines[y])
+		if y == start.y {
+			x1 = start.x
+		}
+		if y == end.y {
+			x2 = end.x
+		}
+		result = append(result, b.lines[y][x1:x2]...)
+		if y < end.y {
+			result = append(result, '\n')
+		}
+	}
+	return result
 }
 
 func (b *Buffer) orderedSelection() (Cursor, Cursor) {
@@ -401,63 +410,30 @@ func (b *Buffer) replaceRangeRunesNoSave(q0, q1 int, runes []rune) {
 	b.replace(start, end, string(runes))
 }
 
-func (b *Buffer) CursorToByteOffset(c Cursor) int {
-	offset := 0
-	for y := 0; y < c.y; y++ {
-		for _, r := range b.lines[y] {
-			offset += utf8.RuneLen(r)
-		}
-		offset++
-	}
-	for _, r := range b.lines[c.y][:c.x] {
-		offset += utf8.RuneLen(r)
-	}
-	return offset
-}
-
-func (b *Buffer) ByteOffsetToCursor(offset int) Cursor {
-	curr := 0
-	for y, line := range b.lines {
-		lineBytes := 0
-		for _, r := range line {
-			lineBytes += utf8.RuneLen(r)
-		}
-		if offset <= curr+lineBytes {
-			byteIdx, rIdx := 0, 0
-			for byteIdx < offset-curr {
-				byteIdx += utf8.RuneLen(line[rIdx])
-				rIdx++
-			}
-			return Cursor{rIdx, y}
-		}
-		curr += lineBytes + 1
-	}
-	lastY := len(b.lines) - 1
-	return Cursor{len(b.lines[lastY]), lastY}
-}
-
-func (b *Buffer) runeOffsetToByteOffset(off int) int {
-	full := b.GetRunes()
-	if off > len(full) {
-		off = len(full)
-	}
-	if off < 0 {
-		off = 0
-	}
-	return len(string(full[:off]))
-}
-
 func (b *Buffer) CursorToRuneOffset(c Cursor) int {
-	byteOff := b.CursorToByteOffset(c)
-	text := b.GetText()
-	if byteOff > len(text) {
-		byteOff = len(text)
-	}
-	return len([]rune(text[:byteOff]))
+	return b.RuneOffsetOfPos(c.y, c.x)
 }
 
 func (b *Buffer) RuneOffsetToCursor(off int) Cursor {
-	return b.ByteOffsetToCursor(b.runeOffsetToByteOffset(off))
+	b.ensureLSR()
+	if off <= 0 {
+		return Cursor{0, 0}
+	}
+	// Binary search: find last line whose start ≤ off.
+	lo, hi := 0, len(b.lsruns)-1
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if b.lsruns[mid] <= off {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	col := off - b.lsruns[lo]
+	if col > len(b.lines[lo]) {
+		col = len(b.lines[lo])
+	}
+	return Cursor{col, lo}
 }
 
 func (b *Buffer) MoveHome() { b.cursor.x = 0 }
