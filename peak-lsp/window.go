@@ -8,12 +8,13 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	enry "github.com/go-enry/go-enry/v2"
 	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-func watchWindow(fs afero.Fs, id int) {
+func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 	base := fmt.Sprintf("/%d", id)
 
 	tag, err := afero.ReadFile(fs, base+"/tag")
@@ -22,55 +23,116 @@ func watchWindow(fs afero.Fs, id int) {
 	}
 	filename := extractFilename(string(tag))
 
-	hl := buildHighlighter(filename)
-	if hl == nil {
-		return
-	}
-
 	eventF, err := fs.OpenFile(base+"/event", os.O_RDWR, 0)
 	if err != nil {
 		return
 	}
 	defer eventF.Close()
 
+	type state struct {
+		hl   *gotreesitter.Highlighter
+		lang string
+		tree *gotreesitter.Tree
+		snap []byte // first ~8K of body for content-based re-detection
+	}
+
 	var (
-		treeMu sync.Mutex
-		tree   *gotreesitter.Tree
+		mu      sync.Mutex
+		cur     = state{lang: "", hl: detectHighlighter(filename, nil)}
+		curFile = filename
 	)
+	if cur.hl != nil {
+		cur.lang = enry.GetLanguage(filename, nil)
+	}
 
-	// trigger is a size-1 channel. Sending on it requests a highlight pass;
-	// if one is already pending the send is dropped, coalescing rapid edits.
 	trigger := make(chan struct{}, 1)
-
-	go func() {
-		for range trigger {
-			body, err := afero.ReadFile(fs, base+"/body")
-			if err != nil || len(body) == 0 {
-				continue
-			}
-			treeMu.Lock()
-			prev := tree
-			treeMu.Unlock()
-
-			ranges, next := hl.HighlightIncremental(body, prev)
-
-			treeMu.Lock()
-			tree = next
-			treeMu.Unlock()
-
-			writeColorSpans(fs, base, body, ranges)
-		}
-	}()
-
-	// Initial highlight pass.
-	trigger <- struct{}{}
-
 	signal := func() {
 		select {
 		case trigger <- struct{}{}:
 		default:
 		}
 	}
+
+	done := make(chan struct{})
+
+	// highlight worker
+	go func() {
+		defer close(done)
+		for range trigger {
+			body, err := afero.ReadFile(fs, base+"/body")
+			if err != nil || len(body) == 0 {
+				continue
+			}
+
+			mu.Lock()
+			s := cur
+			if s.snap == nil {
+				// First body read: refine detection with content.
+				snap := body
+				if len(snap) > 8192 {
+					snap = snap[:8192]
+				}
+				cur.snap = snap
+				lang := enry.GetLanguage(curFile, snap)
+				if lang != "" && lang != s.lang {
+					if hl := buildHighlighterForLang(lang); hl != nil {
+						cur.hl = hl
+						cur.lang = lang
+						cur.tree = nil
+					}
+				}
+				s = cur
+			}
+			mu.Unlock()
+
+			if s.hl == nil {
+				writeColorSpans(fs, base, nil, nil)
+				continue
+			}
+
+			ranges, next := s.hl.HighlightIncremental(body, s.tree)
+
+			mu.Lock()
+			cur.tree = next
+			mu.Unlock()
+
+			writeColorSpans(fs, base, body, ranges)
+		}
+	}()
+
+	// retitle watcher: re-detect language when the window's file changes.
+	go func() {
+		for {
+			select {
+			case newFilename, ok := <-retitleCh:
+				if !ok {
+					return
+				}
+				mu.Lock()
+				curFile = newFilename
+				snap := cur.snap
+				mu.Unlock()
+
+				lang := enry.GetLanguage(newFilename, snap)
+				hl := buildHighlighterForLang(lang)
+
+				mu.Lock()
+				if lang != cur.lang {
+					cur.hl = hl
+					cur.lang = lang
+					cur.tree = nil
+				}
+				mu.Unlock()
+
+				signal()
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// Initial highlight pass.
+	signal()
 
 	scanner := bufio.NewScanner(eventF)
 	for scanner.Scan() {
@@ -95,18 +157,30 @@ func extractFilename(tag string) string {
 	return f[0]
 }
 
-// buildHighlighter creates a tree-sitter Highlighter for the given filename,
-// or nil if the language is not recognised.
-func buildHighlighter(filename string) *gotreesitter.Highlighter {
-	entry := grammars.DetectLanguage(filename)
+// detectHighlighter detects the language using go-enry and builds a highlighter.
+// content may be nil for filename-only detection.
+func detectHighlighter(filename string, content []byte) *gotreesitter.Highlighter {
+	lang := enry.GetLanguage(filename, content)
+	if lang == "" {
+		return nil
+	}
+	return buildHighlighterForLang(lang)
+}
+
+// buildHighlighterForLang creates a tree-sitter Highlighter for the given
+// go-enry / linguist language name, or nil if the language is not supported.
+func buildHighlighterForLang(lang string) *gotreesitter.Highlighter {
+	if lang == "" {
+		return nil
+	}
+	entry := grammars.DetectLanguageByName(lang)
 	if entry == nil {
 		return nil
 	}
-	lang := entry.Language()
-	if lang == nil {
+	l := entry.Language()
+	if l == nil {
 		return nil
 	}
-
 	query := entry.HighlightQuery
 	if query == "" {
 		return nil
@@ -116,11 +190,11 @@ func buildHighlighter(filename string) *gotreesitter.Highlighter {
 	if entry.TokenSourceFactory != nil {
 		factory := entry.TokenSourceFactory
 		opts = append(opts, gotreesitter.WithTokenSourceFactory(func(src []byte) gotreesitter.TokenSource {
-			return factory(src, lang)
+			return factory(src, l)
 		}))
 	}
 
-	hl, err := gotreesitter.NewHighlighter(lang, query, opts...)
+	hl, err := gotreesitter.NewHighlighter(l, query, opts...)
 	if err != nil {
 		return nil
 	}

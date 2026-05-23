@@ -30,26 +30,42 @@ func main() {
 }
 
 // watchEvents opens /event and blocks on it, starting a watchWindow goroutine
-// for each "new <id>" line. "close <id>" lines are informational — watchWindow
-// exits naturally when the window's event file reaches EOF.
+// for each "new <id>" line. "get <id> <filename>" and "put <id> <filename>"
+// lines are forwarded to the corresponding window's retitle channel so it can
+// re-detect the language after a file change.
 func watchEvents(fs afero.Fs) {
 	var mu sync.Mutex
-	watching := make(map[int]bool)
+	retitleChans := make(map[int]chan<- string)
 
 	start := func(id int) {
 		mu.Lock()
-		already := watching[id]
+		_, already := retitleChans[id]
+		var ch chan string
 		if !already {
-			watching[id] = true
+			ch = make(chan string, 4)
+			retitleChans[id] = ch
 		}
 		mu.Unlock()
 		if !already {
 			go func() {
-				watchWindow(fs, id)
+				watchWindow(fs, id, ch)
 				mu.Lock()
-				delete(watching, id)
+				delete(retitleChans, id)
 				mu.Unlock()
 			}()
+		}
+	}
+
+	retitle := func(id int, filename string) {
+		mu.Lock()
+		ch := retitleChans[id]
+		mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- filename:
+			default:
+				// channel full; drop — next event will carry the latest name
+			}
 		}
 	}
 
@@ -76,9 +92,19 @@ func watchEvents(fs afero.Fs) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		parts := strings.Fields(line)
-		if len(parts) >= 2 && parts[0] == "new" {
-			if id, err := strconv.Atoi(parts[1]); err == nil {
-				start(id)
+		if len(parts) < 2 {
+			continue
+		}
+		id, err := strconv.Atoi(parts[1])
+		if err != nil {
+			continue
+		}
+		switch parts[0] {
+		case "new":
+			start(id)
+		case "get", "put":
+			if len(parts) >= 3 {
+				retitle(id, parts[2])
 			}
 		}
 	}
