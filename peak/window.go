@@ -542,6 +542,12 @@ type Window struct {
 	// color spans applied during Draw; written by 9P goroutine, read by main
 	spansMu sync.RWMutex
 	spans   []colorSpan
+
+	// mutSeq is incremented on every body mutation (UI thread only).
+	// bodySnapSeq is set to mutSeq when the body is snapped for a 9P read.
+	// winColorFile.Close discards spans if mutSeq != bodySnapSeq, meaning the
+	// body changed after the snapshot peak-lsp used to compute the spans.
+	mutSeq, bodySnapSeq uint64
 }
 
 func (win *Window) subscribeEvent() *eventSub {
@@ -585,6 +591,51 @@ func (win *Window) broadcastEvent(kind byte, q0, q1 int, text string) {
 	for _, s := range subs {
 		s.deliver(line)
 	}
+}
+
+// adjustPoint shifts a single rune offset after a buffer mutation
+// [q0, q1Old) → [q0, q1New). Offsets inside the deleted region clamp to q0.
+func adjustPoint(q, q0, q1Old, q1New int) int {
+	if q <= q0 {
+		return q
+	}
+	if q >= q1Old {
+		return q + (q1New - q1Old)
+	}
+	return q0
+}
+
+// adjustSpans shifts or drops color spans to stay consistent with a body
+// mutation [q0, q1Old) → [q0, q1New). Called from onMutate before the next
+// Draw so spans never point at the wrong rune positions between an edit and
+// the next highlight pass from peak-lsp.
+func (win *Window) adjustSpans(q0, q1Old, q1New int) {
+	win.spansMu.Lock()
+	defer win.spansMu.Unlock()
+	if len(win.spans) == 0 {
+		return
+	}
+	delta := q1New - q1Old
+	spans := win.spans
+	j := 0
+	for _, sp := range spans {
+		switch {
+		case sp.q1 <= q0:
+			// entirely before the change: unchanged
+			spans[j] = sp
+			j++
+		case sp.q0 >= q1Old:
+			// entirely after the change: shift both endpoints
+			spans[j] = colorSpan{sp.q0 + delta, sp.q1 + delta, sp.attr}
+			j++
+		case sp.q0 < q0 && sp.q1 >= q1Old:
+			// surrounds the changed region: only the end endpoint shifts
+			spans[j] = colorSpan{sp.q0, sp.q1 + delta, sp.attr}
+			j++
+		// else: partially overlaps — drop; peak-lsp will rewrite shortly
+		}
+	}
+	win.spans = spans[:j]
 }
 
 // colorAtFunc returns a closure that looks up a rune offset in the given spans.
@@ -643,6 +694,10 @@ func NewWindow(tag, body string, parent *Column, editor *Editor, x, y, w, h int,
 	tv.theme = &editor.theme
 	win.body = tv
 	tv.buffer.onMutate = func(q0, q1Old, q1New int, text string) {
+		win.mutSeq++
+		win.adjustSpans(q0, q1Old, q1New)
+		win.addrQ0 = adjustPoint(win.addrQ0, q0, q1Old, q1New)
+		win.addrQ1 = adjustPoint(win.addrQ1, q0, q1Old, q1New)
 		if q1Old > q0 {
 			win.broadcastEvent('D', q0, q1Old, "")
 		}

@@ -100,6 +100,7 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 				fs.win.editor.Call(func() {
 					if buf := fs.win.body.GetBuffer(); buf != nil {
 						f.snap = []byte(buf.GetText())
+						fs.win.bodySnapSeq = fs.win.mutSeq
 					}
 				})
 			}

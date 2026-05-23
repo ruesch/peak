@@ -374,9 +374,14 @@ func (f *winColorFile) Close() error {
 		}
 		newSpans = append(newSpans, colorSpan{q0, q1, parts[2]})
 	}
-	f.win.spansMu.Lock()
-	f.win.spans = newSpans
-	f.win.spansMu.Unlock()
+	f.win.editor.Call(func() {
+		if f.win.mutSeq != f.win.bodySnapSeq {
+			return // body changed since peak-lsp snapped it; spans are stale
+		}
+		f.win.spansMu.Lock()
+		f.win.spans = newSpans
+		f.win.spansMu.Unlock()
+	})
 	return nil
 }
 
