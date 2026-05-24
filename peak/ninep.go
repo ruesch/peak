@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -98,7 +99,7 @@ func (p *NineP) BroadcastPut(win *Window) {
 // appear in /mount should record it themselves via record().
 func (p *NineP) Mount(socket, path string) (string, error) {
 	// Try virtual socket first: explicit positive check against the namespace.
-	if conn, err := p.nsFs.openSocket(socket); err == nil {
+	if conn, err := p.nsFs.openSocket(context.Background(), socket); err == nil {
 		mountPath := resolvePath(path)
 		clientFs, err := vfs.NewNinePClientFsFromConn(conn)
 		if err != nil {

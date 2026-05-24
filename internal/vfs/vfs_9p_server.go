@@ -21,6 +21,14 @@ const (
 	QTDIR uint8 = 0x80
 )
 
+// twriteOverhead is the fixed header cost of a Twrite message on the wire:
+// size[4] type[1] tag[2] fid[4] offset[8] count[4].
+const twriteOverhead = 4 + 1 + 2 + 4 + 8 + 4
+
+// iounit is the maximum data payload per read/write operation, chosen so that
+// a fully-packed Twrite never exceeds proto.MaxMsgLen.
+const iounit uint32 = proto.MaxMsgLen - twriteOverhead
+
 // NinePSrv implements the go9p.Srv interface to expose an afero.Fs.
 type NinePSrv struct {
 	fs afero.Fs
@@ -30,11 +38,30 @@ func NewNinePSrv(fs afero.Fs) *NinePSrv {
 	return &NinePSrv{fs: fs}
 }
 
+// ConnCleaner is implemented by NinePConn. Files opened over 9P can call
+// RegisterCleanup to schedule work (e.g. unmounting) when the connection drops.
+type ConnCleaner interface {
+	RegisterCleanup(func())
+}
+
+// connAwareFile may be implemented by virtual files that need to know which
+// connection opened them so they can register per-connection cleanup hooks.
+type connAwareFile interface {
+	SetConn(ConnCleaner)
+}
+
 type NinePConn struct {
 	srv       *NinePSrv
 	fids      map[uint32]string
 	openFiles map[uint32]afero.File
 	mu        sync.Mutex
+	cleanups  []func()
+}
+
+func (c *NinePConn) RegisterCleanup(f func()) {
+	c.mu.Lock()
+	c.cleanups = append(c.cleanups, f)
+	c.mu.Unlock()
 }
 
 func (s *NinePSrv) NewConn() go9p.Conn {
@@ -162,6 +189,10 @@ func (s *NinePSrv) Open(c go9p.Conn, r *proto.TOpen) (proto.FCall, error) {
 		return &proto.RError{Header: proto.Header{Type: proto.Rerror, Tag: r.Tag}, Ename: err.Error()}, nil
 	}
 
+	if caf, ok := f.(connAwareFile); ok {
+		caf.SetConn(conn)
+	}
+
 	fi, _ := f.Stat()
 
 	conn.mu.Lock()
@@ -171,7 +202,7 @@ func (s *NinePSrv) Open(c go9p.Conn, r *proto.TOpen) (proto.FCall, error) {
 	return &proto.ROpen{
 		Header: proto.Header{Type: proto.Ropen, Tag: r.Tag},
 		Qid:    toQid(p, fi),
-		Iounit: 0,
+		Iounit: iounit,
 	}, nil
 }
 
@@ -212,7 +243,7 @@ func (s *NinePSrv) Create(c go9p.Conn, r *proto.TCreate) (proto.FCall, error) {
 	return &proto.RCreate{
 		Header: proto.Header{Type: proto.Rcreate, Tag: r.Tag},
 		Qid:    toQid(newPath, fi),
-		Iounit: 0,
+		Iounit: iounit,
 	}, nil
 }
 
@@ -394,6 +425,25 @@ func (s *NinePSrv) Wstat(c go9p.Conn, r *proto.TWstat) (proto.FCall, error) {
 	return &proto.RWstat{Header: proto.Header{Type: proto.Rwstat, Tag: r.Tag}}, nil
 }
 
+// Accepter is implemented by virtual listen sockets (e.g. srvServerFile) that
+// deliver independent per-connection transports, one per dial.
+type Accepter interface {
+	Accept() (io.ReadWriteCloser, error)
+	Close() error
+}
+
+// ServeAccepter runs the accept loop for a virtual listen socket, serving each
+// incoming connection as an independent 9P session in its own goroutine.
+func (s *NinePSrv) ServeAccepter(a Accepter) {
+	for {
+		rwc, err := a.Accept()
+		if err != nil {
+			return
+		}
+		go s.ServeConn(rwc)
+	}
+}
+
 // ServeConn serves a single pre-established 9P connection over rwc.
 func (s *NinePSrv) ServeConn(rwc io.ReadWriteCloser) {
 	defer rwc.Close()
@@ -474,7 +524,9 @@ func (s *NinePSrv) ServeListener(l net.Listener) {
 
 // cleanup closes all files remaining open when a client drops without sending
 // Clunk (e.g. process killed). This releases event subscriptions so that any
-// worker goroutine blocked on a blocking Read is unblocked and can exit.
+// worker goroutine blocked on a blocking Read is unblocked and can exit. It
+// also runs any cleanup hooks registered via RegisterCleanup (e.g. unmounting
+// filesystems that were mounted over this connection).
 func (c *NinePConn) cleanup() {
 	c.mu.Lock()
 	files := make([]afero.File, 0, len(c.openFiles))
@@ -482,9 +534,14 @@ func (c *NinePConn) cleanup() {
 		files = append(files, f)
 	}
 	c.openFiles = make(map[uint32]afero.File)
+	cleanups := c.cleanups
+	c.cleanups = nil
 	c.mu.Unlock()
 	for _, f := range files {
 		f.Close()
+	}
+	for _, fn := range cleanups {
+		fn()
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -289,7 +290,7 @@ func TestMountFileReadsCurrentMounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFile(srv): %v", err)
 	}
-	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
+	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
 
 	dst := "/peak/mount-read-test"
 	writeControl(t, nsFs, "mount", "/srv/mount-read-srv "+dst+"\n")
@@ -323,7 +324,7 @@ func TestMountFileSnapshotOnOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFile(srv): %v", err)
 	}
-	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
+	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
 	dst := "/peak/mount-snapshot-test"
 	writeControl(t, nsFs, "mount", "/srv/mount-snapshot-srv "+dst+"\n")
 
@@ -765,17 +766,28 @@ func TestSrvOpenReadOnlyDenied(t *testing.T) {
 	}
 }
 
-func TestSrvDuplicateNameReturnsExist(t *testing.T) {
+func TestSrvCloneDeviceSecondOpenBlocks(t *testing.T) {
 	_, _, nsFs, _ := setupExecFsTest(t)
+	// First open creates the entry.
 	f, err := nsFs.OpenFile("srv/dup", os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
 	defer f.Close()
-	_, err = nsFs.OpenFile("srv/dup", os.O_RDWR, 0)
-	if !os.IsExist(err) {
-		t.Errorf("second open = %v, want ErrExist", err)
+
+	// Second open uses clone-device semantics: blocks until a client dials.
+	// Dial concurrently to unblock it.
+	go func() {
+		rwc, _ := nsFs.openSocket(t.Context(), "srv/dup")
+		if rwc != nil {
+			rwc.Close()
+		}
+	}()
+	conn, err := nsFs.OpenFile("srv/dup", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("clone-device open: %v", err)
 	}
+	conn.Close()
 }
 
 func TestSrvCloseRemovesFromRegistry(t *testing.T) {
@@ -785,7 +797,7 @@ func TestSrvCloseRemovesFromRegistry(t *testing.T) {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	f.Close()
-	_, err = nsFs.openSocket("srv/temp")
+	_, err = nsFs.openSocket(t.Context(), "srv/temp")
 	if err == nil {
 		t.Error("openSocket succeeded after Close, want error")
 	}
@@ -798,25 +810,48 @@ func TestSrvOpenSocketReturnsClientConn(t *testing.T) {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	defer f.Close()
-	conn, err := nsFs.openSocket("srv/xfer")
+	go func() {
+		rwc, _ := f.(*srvServerFile).Accept()
+		if rwc != nil {
+			rwc.Close()
+		}
+	}()
+	conn, err := nsFs.openSocket(t.Context(), "srv/xfer")
 	if err != nil {
 		t.Fatalf("openSocket: %v", err)
 	}
 	conn.Close()
 }
 
-func TestSrvOpenSocketTwiceFails(t *testing.T) {
+func TestSrvOpenSocketMultipleDials(t *testing.T) {
 	_, _, nsFs, _ := setupExecFsTest(t)
-	f, err := nsFs.OpenFile("srv/once", os.O_RDWR, 0)
+	f, err := nsFs.OpenFile("srv/multi", os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	defer f.Close()
-	if _, err := nsFs.openSocket("srv/once"); err != nil {
+	// Accept in the background to unblock both dials.
+	go func() {
+		for i := 0; i < 2; i++ {
+			rwc, _ := f.(*srvServerFile).Accept()
+			if rwc != nil {
+				rwc.Close()
+			}
+		}
+	}()
+	// Each openSocket call must succeed and return a distinct connection.
+	conn1, err := nsFs.openSocket(t.Context(), "srv/multi")
+	if err != nil {
 		t.Fatalf("first openSocket: %v", err)
 	}
-	if _, err := nsFs.openSocket("srv/once"); err == nil {
-		t.Error("second openSocket succeeded, want error")
+	defer conn1.Close()
+	conn2, err := nsFs.openSocket(t.Context(), "srv/multi")
+	if err != nil {
+		t.Fatalf("second openSocket: %v", err)
+	}
+	defer conn2.Close()
+	if conn1 == conn2 {
+		t.Error("two openSocket calls returned the same connection")
 	}
 }
 
@@ -829,21 +864,39 @@ func TestSrvDataFlowBidirectional(t *testing.T) {
 	}
 	defer serverF.Close()
 
-	clientConn, err := nsFs.openSocket("srv/pipe")
+	// Start Accept before dialing: unbuffered channel requires both sides ready.
+	type acceptResult struct {
+		conn io.ReadWriteCloser
+		err  error
+	}
+	acceptCh := make(chan acceptResult, 1)
+	go func() {
+		conn, err := serverF.(*srvServerFile).Accept()
+		acceptCh <- acceptResult{conn, err}
+	}()
+
+	clientConn, err := nsFs.openSocket(t.Context(), "srv/pipe")
 	if err != nil {
 		t.Fatalf("openSocket: %v", err)
 	}
 	defer clientConn.Close()
 
+	res := <-acceptCh
+	if res.err != nil {
+		t.Fatalf("Accept: %v", res.err)
+	}
+	serverConn := res.conn
+	defer serverConn.Close()
+
 	toServer := []byte("hello from client")
 	go clientConn.Write(toServer)
 	buf := make([]byte, len(toServer))
-	if _, err := io.ReadFull(serverF, buf); err != nil || string(buf) != string(toServer) {
+	if _, err := io.ReadFull(serverConn, buf); err != nil || string(buf) != string(toServer) {
 		t.Errorf("client→server: err=%v data=%q, want %q", err, buf, toServer)
 	}
 
 	toClient := []byte("hello from server")
-	go serverF.Write(toClient)
+	go serverConn.Write(toClient)
 	buf2 := make([]byte, len(toClient))
 	if _, err := io.ReadFull(clientConn, buf2); err != nil || string(buf2) != string(toClient) {
 		t.Errorf("server→client: err=%v data=%q, want %q", err, buf2, toClient)
@@ -889,7 +942,7 @@ func TestMountDispatchVirtualSocket(t *testing.T) {
 	}
 	defer serverF.Close()
 
-	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
+	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
 
 	mountTarget := "/peak/test-virtual-mount"
 	if _, err := e.ninep.Mount("/srv/mounttest", mountTarget); err != nil {
@@ -920,4 +973,186 @@ func TestMountDispatchUnixSocket(t *testing.T) {
 	if mp != mountTarget {
 		t.Errorf("mount not registered at %s after unix mount", mountTarget)
 	}
+}
+
+// ---- reverse-mount (NinePAccepter + auto-unmount) ----
+
+// dialPeakSrv creates an in-process 9P connection to peak's server. The
+// returned done channel closes after the server-side connection exits
+// (i.e., after NinePConn.cleanup has run). Closing conn simulates a crash.
+func dialPeakSrv(t *testing.T, e *Editor, nsFs *peakNamespaceFs) (peakFs afero.Fs, conn net.Conn, done <-chan struct{}) {
+	t.Helper()
+	client, server := net.Pipe()
+	srv := vfs.NewNinePSrv(&peakSrvFs{
+		Fs:   afero.NewBasePathFs(e.ninep.vfs, "/peak"),
+		nsFs: nsFs,
+	})
+	ch := make(chan struct{})
+	go func() {
+		srv.ServeConn(server)
+		close(ch)
+	}()
+	fs, err := vfs.NewNinePClientFsFromConn(client)
+	if err != nil {
+		client.Close()
+		t.Fatalf("NewNinePClientFsFromConn: %v", err)
+	}
+	return fs, client, ch
+}
+
+// TestNinePAccepterDirect tests the NinePAccepter workflow using nsFs directly
+// (no 9P transport for the accept path). ServeAccepter serves requests and the
+// mounted filesystem is readable.
+func TestNinePAccepterDirect(t *testing.T) {
+	e, _, nsFs, _ := setupExecFsTest(t)
+
+	srvFs := afero.NewMemMapFs()
+	if err := afero.WriteFile(srvFs, "/hello", []byte("world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	accepter, err := vfs.NewNinePAccepter(nsFs, "srv/direct")
+	if err != nil {
+		t.Fatalf("NewNinePAccepter: %v", err)
+	}
+	accepterDone := make(chan struct{})
+	go func() {
+		vfs.NewNinePSrv(srvFs).ServeAccepter(accepter)
+		close(accepterDone)
+	}()
+
+	const mountPath = "/peak/direct-test"
+	if _, err := e.ninep.Mount("/srv/direct", mountPath); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	data, err := afero.ReadFile(e.ninep.vfs, mountPath+"/hello")
+	if err != nil {
+		t.Fatalf("ReadFile through mount: %v", err)
+	}
+	if string(data) != "world" {
+		t.Errorf("data = %q, want %q", data, "world")
+	}
+
+	e.ninep.Umount(mountPath)
+	accepter.Close()
+	<-accepterDone
+}
+
+// TestMountAutoUnmountOnConnDrop verifies that a mount created by writing to
+// /mount over a 9P connection is automatically unmounted when that connection
+// drops (simulating a crash of the service process).
+func TestMountAutoUnmountOnConnDrop(t *testing.T) {
+	e, _, nsFs, _ := setupExecFsTest(t)
+
+	serverF, err := nsFs.OpenFile("srv/drop-svc", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer serverF.Close()
+	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
+
+	peakFs, conn, serveConnDone := dialPeakSrv(t, e, nsFs)
+
+	mountF, err := peakFs.OpenFile("/mount", os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile(/mount): %v", err)
+	}
+	if _, err := fmt.Fprintf(mountF, "/srv/drop-svc /peak/auto-unmount\n"); err != nil {
+		t.Fatalf("write /mount: %v", err)
+	}
+	mountF.Close()
+
+	if mp, _ := e.ninep.FindMount("/peak/auto-unmount"); mp != "/peak/auto-unmount" {
+		t.Fatal("mount not found after mounting")
+	}
+
+	conn.Close()         // simulate crash
+	<-serveConnDone      // cleanup() has run by the time this fires
+
+	if mp, _ := e.ninep.FindMount("/peak/auto-unmount"); mp == "/peak/auto-unmount" {
+		t.Fatal("mount should have been cleaned up after connection drop")
+	}
+}
+
+// TestMountMultipleAutoUnmount verifies that all mounts created by a single 9P
+// connection are cleaned up when that connection drops.
+func TestMountMultipleAutoUnmount(t *testing.T) {
+	e, _, nsFs, _ := setupExecFsTest(t)
+
+	for _, name := range []string{"multi-a", "multi-b"} {
+		serverF, err := nsFs.OpenFile("srv/"+name, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatalf("OpenFile(srv/%s): %v", name, err)
+		}
+		defer serverF.Close()
+		go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
+	}
+
+	peakFs, conn, serveConnDone := dialPeakSrv(t, e, nsFs)
+
+	mounts := map[string]string{
+		"multi-a": "/peak/multi-mount-a",
+		"multi-b": "/peak/multi-mount-b",
+	}
+	for svc, dst := range mounts {
+		mountF, err := peakFs.OpenFile("/mount", os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatalf("OpenFile(/mount): %v", err)
+		}
+		fmt.Fprintf(mountF, "/srv/%s %s\n", svc, dst)
+		mountF.Close()
+	}
+	for _, dst := range mounts {
+		if mp, _ := e.ninep.FindMount(dst); mp != dst {
+			t.Fatalf("mount %s not found before drop", dst)
+		}
+	}
+
+	conn.Close()
+	<-serveConnDone
+
+	for _, dst := range mounts {
+		if mp, _ := e.ninep.FindMount(dst); mp == dst {
+			t.Errorf("mount %s should have been cleaned up", dst)
+		}
+	}
+}
+
+// TestNinePAccepterVia9P tests the full cross-process pattern: NinePAccepter
+// uses a real NinePClientFs (9P transport), ServeAccepter accepts through the
+// clone-device path, and the mount is established in peak's VFS.
+func TestNinePAccepterVia9P(t *testing.T) {
+	e, _, nsFs, _ := setupExecFsTest(t)
+
+	peakFs, conn, _ := dialPeakSrv(t, e, nsFs)
+	t.Cleanup(func() { conn.Close() })
+
+	accepter, err := vfs.NewNinePAccepter(peakFs, "/srv/p9svc")
+	if err != nil {
+		t.Fatalf("NewNinePAccepter: %v", err)
+	}
+	defer accepter.Close()
+
+	accepterDone := make(chan struct{})
+	go func() {
+		vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(accepter)
+		close(accepterDone)
+	}()
+
+	mountF, err := peakFs.OpenFile("/mount", os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("OpenFile(/mount): %v", err)
+	}
+	const mountPath = "/peak/p9svc-mount"
+	fmt.Fprintf(mountF, "/srv/p9svc %s\n", mountPath)
+	mountF.Close()
+
+	if mp, _ := e.ninep.FindMount(mountPath); mp != mountPath {
+		t.Fatal("mount not found after NinePAccepter-based setup")
+	}
+
+	e.ninep.Umount(mountPath)
+	accepter.Close()
+	<-accepterDone
 }

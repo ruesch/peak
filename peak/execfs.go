@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/gdamore/tcell/v2"
 )
@@ -24,6 +28,22 @@ type peakSrvFs struct {
 
 func (fs *peakSrvFs) WalkRedirect(dir, name string) (string, os.FileInfo, bool) {
 	return fs.nsFs.WalkRedirect(dir, name)
+}
+
+func (fs *peakSrvFs) Open(name string) (afero.File, error) {
+	return fs.OpenFile(name, os.O_RDONLY, 0)
+}
+
+func (fs *peakSrvFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
+	s := trimSlash(name)
+	switch s {
+	case "exec", "event", "mount", "unmount", "bind", "srv", "srv/":
+		return fs.nsFs.OpenFile(name, flag, perm)
+	}
+	if strings.HasPrefix(s, "srv/") {
+		return fs.nsFs.OpenFile(name, flag, perm)
+	}
+	return fs.Fs.OpenFile(name, flag, perm)
 }
 
 // peakNamespaceFs wraps the 9P-served peak namespace (BasePathFs over the
@@ -125,10 +145,19 @@ func (fs *peakNamespaceFs) OpenFile(name string, flag int, perm os.FileMode) (af
 			}
 			if flag&os.O_RDWR != 0 {
 				sock, err := fs.srvReg.create(sname)
+				if err == nil {
+					return &srvServerFile{name: sname, sock: sock, reg: fs.srvReg}, nil
+				}
+				if !os.IsExist(err) {
+					return nil, err
+				}
+				// Entry already exists: clone-device semantics — block until
+				// the next client dials and return that one connection.
+				rwc, err := fs.srvReg.accept(sname)
 				if err != nil {
 					return nil, err
 				}
-				return &srvServerFile{name: sname, conn: sock.server, reg: fs.srvReg}, nil
+				return &srvConnFile{rwc: rwc, name: sname}, nil
 			}
 			return nil, os.ErrPermission
 		}
@@ -208,7 +237,10 @@ type mountFile struct {
 	editor *Editor
 	data   []byte
 	off    int64
+	conn   vfs.ConnCleaner // set by 9P server on open; nil for in-process callers
 }
+
+func (f *mountFile) SetConn(c vfs.ConnCleaner) { f.conn = c }
 
 func (f *mountFile) Name() string { return "mount" }
 func (f *mountFile) Stat() (os.FileInfo, error) {
@@ -224,7 +256,11 @@ func (f *mountFile) WriteAt(p []byte, _ int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	f.editor.ninep.record(&f.editor.ninep.mounts, resolvedSrc, resolvePath(parts[1]))
+	mountedPath := resolvePath(parts[1])
+	if f.conn != nil {
+		f.conn.RegisterCleanup(func() { f.editor.ninep.Umount(mountedPath) })
+	}
+	f.editor.ninep.record(&f.editor.ninep.mounts, resolvedSrc, mountedPath)
 	return len(p), nil
 }
 
@@ -384,23 +420,13 @@ func (f *execFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(
 
 // ---- /srv virtual socket registry ----
 
-// pipeConn is one end of a virtual socketpair backed by two io.Pipes.
-type pipeConn struct {
-	r *io.PipeReader
-	w *io.PipeWriter
-}
-
-func (c *pipeConn) Read(p []byte) (int, error)  { return c.r.Read(p) }
-func (c *pipeConn) Write(p []byte) (int, error) { return c.w.Write(p) }
-func (c *pipeConn) Close() error {
-	c.r.Close()
-	c.w.Close()
-	return nil
-}
-
+// srvSocket is the server side of a virtual /srv entry. Each openSocket call
+// dials a fresh net.Pipe and sends the server end into conns; the server's
+// accept loop picks it up. done is closed when srvServerFile.Close is called.
 type srvSocket struct {
-	server *pipeConn // peak-git reads requests here, writes responses here
-	client *pipeConn // peak writes requests here, reads responses here; nil once taken
+	conns     chan io.ReadWriteCloser
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // srvRegistry tracks virtual sockets posted under /srv.
@@ -419,30 +445,38 @@ func (r *srvRegistry) create(name string) (*srvSocket, error) {
 	if _, ok := r.sockets[name]; ok {
 		return nil, os.ErrExist
 	}
-	r1, w1 := io.Pipe() // peak → server
-	r2, w2 := io.Pipe() // server → peak
 	sock := &srvSocket{
-		server: &pipeConn{r: r1, w: w2},
-		client: &pipeConn{r: r2, w: w1},
+		conns: make(chan io.ReadWriteCloser),
+		done:  make(chan struct{}),
 	}
 	r.sockets[name] = sock
 	return sock, nil
 }
 
-// takeClient retrieves and removes the client end so peak can mount it.
-func (r *srvRegistry) takeClient(name string) (*pipeConn, error) {
+// dial creates a fresh net.Pipe, hands the server end to the socket's accept
+// loop, and returns the client end. Multiple concurrent callers each get an
+// independent connection. ctx lets the caller time out or cancel if the server
+// is not yet accepting.
+func (r *srvRegistry) dial(ctx context.Context, name string) (io.ReadWriteCloser, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	sock, ok := r.sockets[name]
+	r.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("srv: %s not found", name)
 	}
-	if sock.client == nil {
-		return nil, fmt.Errorf("srv: %s client already taken", name)
+	clientEnd, serverEnd := net.Pipe()
+	select {
+	case sock.conns <- serverEnd:
+		return clientEnd, nil
+	case <-sock.done:
+		clientEnd.Close()
+		serverEnd.Close()
+		return nil, fmt.Errorf("srv: %s closed", name)
+	case <-ctx.Done():
+		clientEnd.Close()
+		serverEnd.Close()
+		return nil, fmt.Errorf("srv: %s: %w", name, ctx.Err())
 	}
-	c := sock.client
-	sock.client = nil
-	return c, nil
 }
 
 func (r *srvRegistry) remove(name string) {
@@ -451,15 +485,16 @@ func (r *srvRegistry) remove(name string) {
 	delete(r.sockets, name)
 }
 
-// openSocket returns the client end of a virtual socket at path, or an error
-// if path does not name a registered virtual socket. The caller is responsible
-// for closing the returned conn on error from the subsequent mount.
-func (fs *peakNamespaceFs) openSocket(path string) (io.ReadWriteCloser, error) {
+// openSocket dials the virtual socket at path and returns the client end of a
+// fresh independent connection. Multiple calls each yield a separate session.
+// ctx is forwarded to dial so the caller can cancel or time out if the server
+// is not yet accepting.
+func (fs *peakNamespaceFs) openSocket(ctx context.Context, path string) (io.ReadWriteCloser, error) {
 	s := trimSlash(path)
 	if strings.HasPrefix(s, "srv/") {
 		name := s[4:]
 		if name != "" {
-			return fs.srvReg.takeClient(name)
+			return fs.srvReg.dial(ctx, name)
 		}
 	}
 	return nil, os.ErrInvalid
@@ -475,11 +510,33 @@ func (r *srvRegistry) list() []string {
 	return names
 }
 
-// srvServerFile is the afero.File returned to the posting process (peak-git).
+// accept blocks until the next client dials name and returns the server end.
+func (r *srvRegistry) accept(name string) (io.ReadWriteCloser, error) {
+	r.mu.Lock()
+	sock, ok := r.sockets[name]
+	r.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("srv: %s not found", name)
+	}
+	select {
+	case rwc := <-sock.conns:
+		return rwc, nil
+	case <-sock.done:
+		return nil, io.EOF
+	}
+}
+
+// errSrvNotStream is returned when code incorrectly treats a listen socket as
+// a byte stream. The correct API is Accept.
+var errSrvNotStream = errors.New("srv: this is a listen socket — use Accept to obtain a per-client connection")
+
+// srvServerFile is the afero.File returned to the posting process (e.g.
+// peak-git). It acts as a listen socket: Accept delivers independent
+// per-connection transports, one per openSocket call.
 type srvServerFile struct {
 	winStub
 	name string
-	conn *pipeConn
+	sock *srvSocket
 	reg  *srvRegistry
 }
 
@@ -487,13 +544,34 @@ func (f *srvServerFile) Name() string { return f.name }
 func (f *srvServerFile) Stat() (os.FileInfo, error) {
 	return &simpleFileInfo{name: f.name, mode: 0600}, nil
 }
-func (f *srvServerFile) Read(p []byte) (int, error)              { return f.conn.Read(p) }
-func (f *srvServerFile) ReadAt(p []byte, _ int64) (int, error)   { return f.conn.Read(p) }
-func (f *srvServerFile) Write(p []byte) (int, error)             { return f.conn.Write(p) }
-func (f *srvServerFile) WriteAt(p []byte, _ int64) (int, error)  { return f.conn.Write(p) }
-func (f *srvServerFile) WriteString(s string) (int, error)       { return f.conn.Write([]byte(s)) }
+func (f *srvServerFile) Read(p []byte) (int, error)             { return 0, errSrvNotStream }
+func (f *srvServerFile) ReadAt(p []byte, _ int64) (int, error)  { return 0, errSrvNotStream }
+func (f *srvServerFile) Write(p []byte) (int, error)            { return 0, errSrvNotStream }
+func (f *srvServerFile) WriteAt(p []byte, _ int64) (int, error) { return 0, errSrvNotStream }
+
+// Accept blocks until a client dials this socket (via openSocket) and returns
+// the server end of a fresh independent connection.
+func (f *srvServerFile) Accept() (io.ReadWriteCloser, error) {
+	select {
+	case rwc := <-f.sock.conns:
+		return rwc, nil
+	case <-f.sock.done:
+		return nil, io.EOF
+	}
+}
+
 func (f *srvServerFile) Close() error {
-	f.conn.Close()
+	f.sock.closeOnce.Do(func() {
+		close(f.sock.done)
+		for {
+			select {
+			case rwc := <-f.sock.conns:
+				rwc.Close()
+			default:
+				return
+			}
+		}
+	})
 	f.reg.remove(f.name)
 	return nil
 }
@@ -541,3 +619,20 @@ func (f *srvDirFile) Readdirnames(n int) ([]string, error) {
 	}
 	return names, nil
 }
+
+// srvConnFile wraps one end of a net.Pipe as an afero.File, returned by the
+// clone-device open of an existing /srv entry.
+type srvConnFile struct {
+	winStub
+	rwc  io.ReadWriteCloser
+	name string
+}
+
+func (f *srvConnFile) Name() string                           { return f.name }
+func (f *srvConnFile) Stat() (os.FileInfo, error)            { return &simpleFileInfo{name: f.name, mode: 0600}, nil }
+func (f *srvConnFile) Read(p []byte) (int, error)            { return f.rwc.Read(p) }
+func (f *srvConnFile) ReadAt(p []byte, _ int64) (int, error) { return f.rwc.Read(p) }
+func (f *srvConnFile) Write(p []byte) (int, error)           { return f.rwc.Write(p) }
+func (f *srvConnFile) WriteAt(p []byte, _ int64) (int, error){ return f.rwc.Write(p) }
+func (f *srvConnFile) WriteString(s string) (int, error)     { return f.rwc.Write([]byte(s)) }
+func (f *srvConnFile) Close() error                          { return f.rwc.Close() }
