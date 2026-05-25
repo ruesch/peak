@@ -45,12 +45,10 @@ func (fs *CompositeFs) Umount(path string) {
 	fs.mu.Unlock()
 }
 
-func (fs *CompositeFs) getFs(name string) (afero.Fs, string) {
+func (fs *CompositeFs) getMountAndFs(name string) (mountPath string, mountedFs afero.Fs, relPath string) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
-
 	cleanName := filepath.Clean(name)
-
 	bestMatch := ""
 	for m := range fs.mounts {
 		if cleanName == m || strings.HasPrefix(cleanName, m+string(os.PathSeparator)) || (m == "/" && strings.HasPrefix(cleanName, "/")) {
@@ -59,7 +57,6 @@ func (fs *CompositeFs) getFs(name string) (afero.Fs, string) {
 			}
 		}
 	}
-
 	if bestMatch != "" {
 		rel, _ := filepath.Rel(bestMatch, cleanName)
 		if rel == "." {
@@ -67,10 +64,34 @@ func (fs *CompositeFs) getFs(name string) (afero.Fs, string) {
 		} else {
 			rel = "/" + rel
 		}
-		return fs.mounts[bestMatch], rel
+		return bestMatch, fs.mounts[bestMatch], rel
 	}
+	return "", fs.root, name
+}
 
-	return fs.root, name
+func (fs *CompositeFs) getFs(name string) (afero.Fs, string) {
+	_, mountedFs, relPath := fs.getMountAndFs(name)
+	return mountedFs, relPath
+}
+
+// WalkRedirect implements WalkRedirector by delegating to the filesystem
+// responsible for dir. If that filesystem implements WalkRedirector, it is
+// called with a dir relative to its mount point; the returned path is converted
+// back to a composite-absolute path.
+func (fs *CompositeFs) WalkRedirect(dir, name string) (string, os.FileInfo, bool) {
+	mountPath, targetFs, relDir := fs.getMountAndFs(filepath.Clean(dir))
+	wr, ok := targetFs.(WalkRedirector)
+	if !ok {
+		return "", nil, false
+	}
+	rp, fi, ok := wr.WalkRedirect(relDir, name)
+	if !ok {
+		return "", nil, false
+	}
+	if mountPath == "" {
+		return rp, fi, true
+	}
+	return filepath.Join(mountPath, strings.TrimPrefix(rp, "/")), fi, true
 }
 
 func (fs *CompositeFs) Create(name string) (afero.File, error) {
@@ -177,6 +198,8 @@ type CompositeFile struct {
 	fs   *CompositeFs
 	name string
 }
+
+func (f *CompositeFile) Unwrap() afero.File { return f.File }
 
 func (f *CompositeFile) Readdir(count int) ([]os.FileInfo, error) {
 	entries, err := f.File.Readdir(count)

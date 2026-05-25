@@ -37,6 +37,8 @@ func (f *BasePathFile) Name() string {
 	return strings.TrimPrefix(sourcename, filepath.Clean(f.path))
 }
 
+func (f *BasePathFile) Unwrap() File { return f.File }
+
 func (f *BasePathFile) ReadDir(n int) ([]fs.DirEntry, error) {
 	if rdf, ok := f.File.(fs.ReadDirFile); ok {
 		return rdf.ReadDir(n)

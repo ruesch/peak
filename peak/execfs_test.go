@@ -61,9 +61,8 @@ func TestNamespaceFsStatVirtualFiles(t *testing.T) {
 	}
 }
 
-func TestNamespaceFsStatForwardedToInner(t *testing.T) {
+func TestNamespaceFsStatRootAndUnknown(t *testing.T) {
 	_, _, nsFs, _ := setupExecFsTest(t)
-	// Root dir is always present in the inner VFS.
 	fi, err := nsFs.Stat(".")
 	if err != nil {
 		t.Fatalf("Stat(.): %v", err)
@@ -662,8 +661,7 @@ func TestWalkRedirectWindowFilesAccessible(t *testing.T) {
 		t.Fatal("WalkRedirect returned ok=false")
 	}
 
-	// The inner fs is a BasePathFs over /peak; after the window is mounted,
-	// /<id>/body etc. should stat correctly through it.
+	// Verify the window files are accessible through the composite at /peak.
 	inner := afero.NewBasePathFs(e.ninep.vfs, "/peak")
 	for _, file := range []string{"body", "tag", "ctl", "event", "addr", "data"} {
 		path := redirectPath + "/" + file
@@ -977,16 +975,14 @@ func TestMountDispatchUnixSocket(t *testing.T) {
 
 // ---- reverse-mount (NinePAccepter + auto-unmount) ----
 
-// dialPeakSrv creates an in-process 9P connection to peak's server. The
-// returned done channel closes after the server-side connection exits
-// (i.e., after NinePConn.cleanup has run). Closing conn simulates a crash.
-func dialPeakSrv(t *testing.T, e *Editor, nsFs *peakNamespaceFs) (peakFs afero.Fs, conn net.Conn, done <-chan struct{}) {
+// dialPeakSrv creates an in-process 9P connection to peak's server, mirroring
+// exactly what NineP.Listen serves. The returned done channel closes after the
+// server-side connection exits (i.e., after NinePConn.cleanup has run).
+// Closing conn simulates a crash.
+func dialPeakSrv(t *testing.T, e *Editor) (peakFs afero.Fs, conn net.Conn, done <-chan struct{}) {
 	t.Helper()
 	client, server := net.Pipe()
-	srv := vfs.NewNinePSrv(&peakSrvFs{
-		Fs:   afero.NewBasePathFs(e.ninep.vfs, "/peak"),
-		nsFs: nsFs,
-	})
+	srv := vfs.NewNinePSrv(vfs.NewRootedFs(e.ninep.vfs, "/peak"))
 	ch := make(chan struct{})
 	go func() {
 		srv.ServeConn(server)
@@ -1052,7 +1048,7 @@ func TestMountAutoUnmountOnConnDrop(t *testing.T) {
 	defer serverF.Close()
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
 
-	peakFs, conn, serveConnDone := dialPeakSrv(t, e, nsFs)
+	peakFs, conn, serveConnDone := dialPeakSrv(t, e)
 
 	mountF, err := peakFs.OpenFile("/mount", os.O_WRONLY, 0)
 	if err != nil {
@@ -1089,7 +1085,7 @@ func TestMountMultipleAutoUnmount(t *testing.T) {
 		go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeAccepter(serverF.(*srvServerFile))
 	}
 
-	peakFs, conn, serveConnDone := dialPeakSrv(t, e, nsFs)
+	peakFs, conn, serveConnDone := dialPeakSrv(t, e)
 
 	mounts := map[string]string{
 		"multi-a": "/peak/multi-mount-a",
@@ -1123,9 +1119,9 @@ func TestMountMultipleAutoUnmount(t *testing.T) {
 // uses a real NinePClientFs (9P transport), ServeAccepter accepts through the
 // clone-device path, and the mount is established in peak's VFS.
 func TestNinePAccepterVia9P(t *testing.T) {
-	e, _, nsFs, _ := setupExecFsTest(t)
+	e, _, _, _ := setupExecFsTest(t)
 
-	peakFs, conn, _ := dialPeakSrv(t, e, nsFs)
+	peakFs, conn, _ := dialPeakSrv(t, e)
 	t.Cleanup(func() { conn.Close() })
 
 	accepter, err := vfs.NewNinePAccepter(peakFs, "/srv/p9svc")

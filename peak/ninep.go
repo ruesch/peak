@@ -40,7 +40,7 @@ func NewNineP(e *Editor) *NineP {
 	p := &NineP{editor: e, vfs: fs, bus: &globalEventBus{}, nsBase: nsBase}
 
 	p.vfs.Mount("/", afero.NewOsFs())
-	p.nsFs = newPeakNamespaceFs(afero.NewMemMapFs(), e, p.bus)
+	p.nsFs = newPeakNamespaceFs(e, p.bus)
 	p.vfs.Mount(nsBase, p.nsFs)
 
 	docFs := afero.FromIOFS{FS: docFS}
@@ -59,10 +59,7 @@ func (p *NineP) Listen() {
 	os.MkdirAll(filepath.Dir(sockPath), 0700)
 	os.Remove(sockPath)
 
-	srv := vfs.NewNinePSrv(&peakSrvFs{
-		Fs:   afero.NewBasePathFs(p.vfs, "/peak"),
-		nsFs: p.nsFs,
-	})
+	srv := vfs.NewNinePSrv(vfs.NewRootedFs(p.vfs, p.nsBase))
 	go func() {
 		if err := srv.Serve("unix", sockPath); err != nil {
 			log.Printf("9P server error: %v", err)

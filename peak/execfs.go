@@ -17,47 +17,19 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-// peakSrvFs is the afero.Fs handed to the 9P server. It embeds the
-// BasePathFs-over-composite that handles all real file operations, and
-// additionally implements vfs.WalkRedirector by delegating directly to
-// peakNamespaceFs — whose namespace root matches the 9P namespace root.
-type peakSrvFs struct {
-	afero.Fs
-	nsFs *peakNamespaceFs
-}
-
-func (fs *peakSrvFs) WalkRedirect(dir, name string) (string, os.FileInfo, bool) {
-	return fs.nsFs.WalkRedirect(dir, name)
-}
-
-func (fs *peakSrvFs) Open(name string) (afero.File, error) {
-	return fs.OpenFile(name, os.O_RDONLY, 0)
-}
-
-func (fs *peakSrvFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	s := trimSlash(name)
-	switch s {
-	case "exec", "event", "mount", "unmount", "bind", "srv", "srv/":
-		return fs.nsFs.OpenFile(name, flag, perm)
-	}
-	if strings.HasPrefix(s, "srv/") {
-		return fs.nsFs.OpenFile(name, flag, perm)
-	}
-	return fs.Fs.OpenFile(name, flag, perm)
-}
-
-// peakNamespaceFs wraps the 9P-served peak namespace (BasePathFs over the
-// composite VFS) to add virtual control files. Without this wrapper the
-// composite mount mechanism would create them as directories.
+// peakNamespaceFs is a pure virtual file server for the /peak control files.
+// It serves only its own files; the composite VFS routes all other paths (window
+// subdirectories, mounted services) to the appropriate file server before they
+// reach nsFs. The 9P server exposes the complete /peak namespace via rootedFs,
+// which serves nsFs control files through the composite's union-mount routing.
 type peakNamespaceFs struct {
-	inner  afero.Fs
 	editor *Editor
 	bus    *globalEventBus
 	srvReg *srvRegistry
 }
 
-func newPeakNamespaceFs(inner afero.Fs, editor *Editor, bus *globalEventBus) *peakNamespaceFs {
-	return &peakNamespaceFs{inner: inner, editor: editor, bus: bus, srvReg: newSrvRegistry()}
+func newPeakNamespaceFs(editor *Editor, bus *globalEventBus) *peakNamespaceFs {
+	return &peakNamespaceFs{editor: editor, bus: bus, srvReg: newSrvRegistry()}
 }
 
 func (fs *peakNamespaceFs) Stat(name string) (os.FileInfo, error) {
@@ -77,6 +49,8 @@ func (fs *peakNamespaceFs) Stat(name string) (os.FileInfo, error) {
 		return &simpleFileInfo{name: "new", isDir: true, mode: 0555}, nil
 	case "srv":
 		return &simpleFileInfo{name: "srv", isDir: true, mode: 0555}, nil
+	case "", ".":
+		return &simpleFileInfo{name: "peak", isDir: true, mode: 0555}, nil
 	}
 	if strings.HasPrefix(s, "srv/") {
 		sname := s[4:]
@@ -84,7 +58,7 @@ func (fs *peakNamespaceFs) Stat(name string) (os.FileInfo, error) {
 			return &simpleFileInfo{name: sname, mode: 0600}, nil
 		}
 	}
-	return fs.inner.Stat(name)
+	return nil, os.ErrNotExist
 }
 
 // WalkRedirect implements vfs.WalkRedirector. Walking "new" from the root
@@ -132,11 +106,7 @@ func (fs *peakNamespaceFs) OpenFile(name string, flag int, perm os.FileMode) (af
 	case "srv", "srv/":
 		return &srvDirFile{reg: fs.srvReg}, nil
 	case "", ".":
-		f, err := fs.inner.OpenFile(name, flag, perm)
-		if err != nil {
-			return nil, err
-		}
-		return &peakRootDirFile{File: f}, nil
+		return &peakRootDirFile{}, nil
 	default:
 		if strings.HasPrefix(s, "srv/") {
 			sname := s[4:]
@@ -161,47 +131,66 @@ func (fs *peakNamespaceFs) OpenFile(name string, flag int, perm os.FileMode) (af
 			}
 			return nil, os.ErrPermission
 		}
-		return fs.inner.OpenFile(name, flag, perm)
+		return nil, os.ErrNotExist
 	}
 }
 
-func (fs *peakNamespaceFs) Create(n string) (afero.File, error)    { return fs.inner.Create(n) }
-func (fs *peakNamespaceFs) Mkdir(n string, p os.FileMode) error    { return fs.inner.Mkdir(n, p) }
-func (fs *peakNamespaceFs) MkdirAll(n string, p os.FileMode) error { return fs.inner.MkdirAll(n, p) }
-func (fs *peakNamespaceFs) Remove(n string) error                  { return fs.inner.Remove(n) }
-func (fs *peakNamespaceFs) RemoveAll(n string) error               { return fs.inner.RemoveAll(n) }
-func (fs *peakNamespaceFs) Rename(o, n string) error               { return fs.inner.Rename(o, n) }
-func (fs *peakNamespaceFs) Chmod(n string, m os.FileMode) error    { return fs.inner.Chmod(n, m) }
-func (fs *peakNamespaceFs) Chown(n string, u, g int) error         { return fs.inner.Chown(n, u, g) }
-func (fs *peakNamespaceFs) Chtimes(n string, a, m time.Time) error { return fs.inner.Chtimes(n, a, m) }
+func (fs *peakNamespaceFs) Create(n string) (afero.File, error)    { return nil, os.ErrPermission }
+func (fs *peakNamespaceFs) Mkdir(n string, p os.FileMode) error    { return os.ErrPermission }
+func (fs *peakNamespaceFs) MkdirAll(n string, p os.FileMode) error { return os.ErrPermission }
+func (fs *peakNamespaceFs) Remove(n string) error                  { return os.ErrPermission }
+func (fs *peakNamespaceFs) RemoveAll(n string) error               { return os.ErrPermission }
+func (fs *peakNamespaceFs) Rename(o, n string) error               { return os.ErrPermission }
+func (fs *peakNamespaceFs) Chmod(n string, m os.FileMode) error    { return os.ErrPermission }
+func (fs *peakNamespaceFs) Chown(n string, u, g int) error         { return os.ErrPermission }
+func (fs *peakNamespaceFs) Chtimes(n string, a, m time.Time) error { return os.ErrPermission }
 func (fs *peakNamespaceFs) Name() string                           { return "peakNamespaceFs" }
 
-// peakRootDirFile replaces virtual file directory entries (created by Mount's
-// MkdirAll) with regular file entries in directory listings.
-type peakRootDirFile struct{ afero.File }
+// peakRootDirFile lists the virtual control files served directly by nsFs.
+// The composite's CompositeFile.Readdir merges these entries with window stubs
+// (created in the composite's root MemMapFs by MkdirAll on each window mount),
+// producing the complete /peak directory listing.
+type peakRootDirFile struct {
+	winStub
+	offset int
+}
 
+var peakVirtualEntries = []os.FileInfo{
+	&simpleFileInfo{name: "exec", mode: 0600},
+	&simpleFileInfo{name: "event", mode: 0444},
+	&simpleFileInfo{name: "mount", mode: 0600},
+	&simpleFileInfo{name: "unmount", mode: 0200},
+	&simpleFileInfo{name: "bind", mode: 0600},
+	&simpleFileInfo{name: "new", isDir: true, mode: 0555},
+	&simpleFileInfo{name: "srv", isDir: true, mode: 0555},
+}
+
+func (f *peakRootDirFile) Name() string { return "/" }
+func (f *peakRootDirFile) Stat() (os.FileInfo, error) {
+	return &simpleFileInfo{name: "peak", isDir: true, mode: 0555}, nil
+}
 func (f *peakRootDirFile) Readdir(count int) ([]os.FileInfo, error) {
-	entries, err := f.File.Readdir(count)
-	if count > 0 {
-		return entries, err
+	if count <= 0 {
+		return peakVirtualEntries, nil
 	}
-	virtual := map[string]bool{"exec": true, "event": true, "mount": true, "unmount": true, "bind": true, "new": true, "srv": true}
-	filtered := entries[:0]
-	for _, e := range entries {
-		if !virtual[e.Name()] {
-			filtered = append(filtered, e)
-		}
+	if f.offset >= len(peakVirtualEntries) {
+		return nil, io.EOF
 	}
-	filtered = append(filtered,
-		&simpleFileInfo{name: "exec", mode: 0600},
-		&simpleFileInfo{name: "event", mode: 0444},
-		&simpleFileInfo{name: "mount", mode: 0600},
-		&simpleFileInfo{name: "unmount", mode: 0200},
-		&simpleFileInfo{name: "bind", mode: 0600},
-		&simpleFileInfo{name: "new", isDir: true, mode: 0555},
-		&simpleFileInfo{name: "srv", isDir: true, mode: 0555},
-	)
-	return filtered, err
+	end := f.offset + count
+	if end > len(peakVirtualEntries) {
+		end = len(peakVirtualEntries)
+	}
+	res := peakVirtualEntries[f.offset:end]
+	f.offset = end
+	return res, nil
+}
+func (f *peakRootDirFile) Readdirnames(n int) ([]string, error) {
+	infos, err := f.Readdir(n)
+	names := make([]string, len(infos))
+	for i, fi := range infos {
+		names[i] = fi.Name()
+	}
+	return names, err
 }
 
 // ---- globalEventFile ----
@@ -355,7 +344,6 @@ func (f *bindFile) Read(p []byte) (int, error) {
 
 func (f *bindFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
 func (f *bindFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
-
 
 // execFile implements /exec: write a window title to create an externally-driven
 // terminal window; read back the numeric window ID followed by a newline.
