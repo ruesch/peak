@@ -112,11 +112,11 @@ func (b *Buffer) LineCount() int {
 	return len(b.lines)
 }
 
-func (b *Buffer) GetLine(y int) string {
+func (b *Buffer) GetLine(y int) []rune {
 	if y < 0 || y >= len(b.lines) {
-		return ""
+		return nil
 	}
-	return string(b.lines[y])
+	return b.lines[y]
 }
 
 func (b *Buffer) GetSelectedText() string {

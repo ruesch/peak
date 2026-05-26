@@ -280,24 +280,23 @@ func (tv *TermView) LineCount() int {
 	return tv.getContentHeight()
 }
 
-func (tv *TermView) GetLine(y int) string {
+func (tv *TermView) GetLine(y int) []rune {
 	tv.state.Lock()
 	defer tv.state.Unlock()
 	return tv.getLine(y)
 }
 
-func (tv *TermView) getLine(y int) string {
+func (tv *TermView) getLine(y int) []rune {
 	// Must be called with lock
 	limit := max(maxHistory, tv.h)
 	if y < 0 || y >= limit {
-		return ""
+		return nil
 	}
-	var sb strings.Builder
+	line := make([]rune, tv.w)
 	for x := 0; x < tv.w; x++ {
-		c, _, _, _ := tv.state.Cell(x, y)
-		sb.WriteRune(c)
+		line[x], _, _, _ = tv.state.Cell(x, y)
 	}
-	return sb.String()
+	return line
 }
 
 func (tv *TermView) Search(word string) int {
@@ -370,7 +369,7 @@ func (tv *TermView) GetScrollback() string {
 	n := tv.getContentHeight()
 	var sb strings.Builder
 	for y := 0; y < n; y++ {
-		line := strings.TrimRight(tv.getLine(y), " \x00")
+		line := strings.TrimRight(string(tv.getLine(y)), " \x00")
 		sb.WriteString(line)
 		sb.WriteByte('\n')
 	}
@@ -381,8 +380,8 @@ type termLineProvider struct {
 	tv *TermView
 }
 
-func (p termLineProvider) LineCount() int       { return p.tv.getContentHeight() }
-func (p termLineProvider) GetLine(y int) string { return p.tv.getLine(y) }
+func (p termLineProvider) LineCount() int      { return p.tv.getContentHeight() }
+func (p termLineProvider) GetLine(y int) []rune { return p.tv.getLine(y) }
 
 func (tv *TermView) GetSelectedText() string {
 	tv.state.Lock()

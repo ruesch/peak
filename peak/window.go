@@ -486,11 +486,11 @@ func (tv *TextView) LineCount() int {
 	return len(tv.buffer.lines)
 }
 
-func (tv *TextView) GetLine(y int) string {
+func (tv *TextView) GetLine(y int) []rune {
 	if y < 0 || y >= len(tv.buffer.lines) {
-		return ""
+		return nil
 	}
-	return string(tv.buffer.lines[y])
+	return tv.buffer.lines[y]
 }
 
 func (tv *TextView) Search(word string) int {

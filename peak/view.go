@@ -114,9 +114,10 @@ func GetWordBoundaries(x int, length int, getChar func(int) rune) (int, int) {
 }
 
 // LineProvider is an interface for types that can provide lines for searching.
+// GetLine returns the rune sequence for line y; the slice must not be modified.
 type LineProvider interface {
 	LineCount() int
-	GetLine(y int) string
+	GetLine(y int) []rune
 }
 
 // Search performs a two-pass search (forward from start, then wrap around).
@@ -130,9 +131,25 @@ func Search(lp LineProvider, word string, start Cursor) (int, Selection, bool) {
 	if count == 0 {
 		return -1, Selection{}, false
 	}
+	wordRunes := []rune(word)
+	wn := len(wordRunes)
 	startRX, startRY := start.x+1, start.y
 	if startRY >= count {
 		startRY, startRX = 0, 0
+	}
+
+	// find returns the rune index of wordRunes in line[from:], or -1.
+	find := func(line []rune, from int) int {
+		for i := from; i+wn <= len(line); i++ {
+			j := 0
+			for j < wn && line[i+j] == wordRunes[j] {
+				j++
+			}
+			if j == wn {
+				return i
+			}
+		}
+		return -1
 	}
 
 	// Pass 1: startRY to end
@@ -140,15 +157,12 @@ func Search(lp LineProvider, word string, start Cursor) (int, Selection, bool) {
 		line := lp.GetLine(y)
 		sx := 0
 		if y == startRY {
-			sx = startRX
-			if sx > len(line) {
-				sx = len(line)
-			}
+			sx = min(startRX, len(line))
 		}
-		if x := strings.Index(line[sx:], word); x != -1 {
+		if x := find(line, sx); x != -1 {
 			return y, Selection{
-				Start:  Cursor{sx + x, y},
-				End:    Cursor{sx + x + len(word), y},
+				Start:  Cursor{x, y},
+				End:    Cursor{x + wn, y},
 				Active: true,
 			}, true
 		}
@@ -159,15 +173,12 @@ func Search(lp LineProvider, word string, start Cursor) (int, Selection, bool) {
 		line := lp.GetLine(y)
 		limit := len(line)
 		if y == startRY {
-			limit = startRX
-			if limit > len(line) {
-				limit = len(line)
-			}
+			limit = min(startRX, len(line))
 		}
-		if x := strings.Index(line[:limit], word); x != -1 {
+		if x := find(line[:limit], 0); x != -1 {
 			return y, Selection{
 				Start:  Cursor{x, y},
-				End:    Cursor{x + len(word), y},
+				End:    Cursor{x + wn, y},
 				Active: true,
 			}, true
 		}
@@ -200,7 +211,7 @@ func GetTextInSelection(lp LineProvider, s Selection, trimRight bool) string {
 		x2 = max(0, min(x2, len(line)))
 
 		if x1 < x2 {
-			content := line[x1:x2]
+			content := string(line[x1:x2])
 			if trimRight {
 				content = strings.TrimRight(content, " ")
 			}
