@@ -182,7 +182,7 @@ func (tv *TextView) visualToBuffer(vx, vidx int) (int, int) {
 	bx, currVX := vl.Start, 0
 	for i := vl.Start; i < vl.End; i++ {
 		w := tv.runeWidth(line[i], currVX)
-		if currVX+w/2 > vx {
+		if currVX+w > vx {
 			break
 		}
 		currVX += w
