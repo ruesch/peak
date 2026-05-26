@@ -158,6 +158,16 @@ func TestTcellView(t *testing.T) {
 	}
 }
 
+func TestTextViewClickPlacesCursorOnClickedCharacter(t *testing.T) {
+	tv := NewTextView("abc", 0, 0, 10, 1, tcell.StyleDefault, false, false)
+
+	tv.HandleEvent(tcell.NewEventMouse(0, 0, tcell.Button1, 0))
+
+	if got := tv.buffer.cursor; got != (Cursor{0, 0}) {
+		t.Fatalf("cursor after clicking first character = %+v, want %+v", got, Cursor{0, 0})
+	}
+}
+
 func TestNewColClick(t *testing.T) {
 	e, s := setupTest(t, 100, 24)
 
