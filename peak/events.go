@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/aleksana/peak/internal/wevent"
 )
 
 // colorSpan marks a rune range with a named syntax attribute.
@@ -31,11 +34,11 @@ func newEventSub() *eventSub {
 	return &eventSub{ch: make(chan []byte, 64)}
 }
 
-// deliver sends line to the subscriber. Non-blocking: if the channel is
-// full the line is dropped (peak-lsp will re-sync from the next event).
-func (s *eventSub) deliver(line []byte) {
+// deliver sends a record chunk to the subscriber. Non-blocking: if the channel is
+// full the chunk is dropped (peak-lsp will re-sync from the next event).
+func (s *eventSub) deliver(chunk []byte) {
 	select {
-	case s.ch <- line:
+	case s.ch <- chunk:
 	default:
 	}
 }
@@ -125,33 +128,33 @@ func (f *winEventFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.sub.readAt(p, off)
 }
 
-// WriteAt handles event bounce-back: a tool writes "x q0 q1 text\n" or
-// "l q0 q1 text\n" to re-dispatch an event it received but wants the
-// editor to handle normally.
+// WriteAt handles event bounce-back. It accepts counted v2 records only.
 func (f *winEventFile) WriteAt(p []byte, _ int64) (int, error) {
-	for _, line := range strings.Split(strings.TrimSpace(string(p)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	r := bytes.NewReader(p)
+	for {
+		posBefore := len(p) - r.Len()
+		ev, err := wevent.Read(r)
+		if err == io.EOF {
+			return len(p), nil
 		}
-		parts := strings.Fields(line)
-		if len(parts) < 3 {
-			continue
+		if err != nil {
+			return posBefore, err
 		}
-		kind := parts[0]
-		text := ""
-		if len(parts) > 3 {
-			text = strings.Join(parts[3:], " ")
-		}
-		win := f.win
-		switch kind {
-		case "x":
-			win.editor.execCh <- execReq{col: win.parent, win: win, text: text, kind: 'x'}
-		case "l":
-			win.editor.execCh <- execReq{win: win, text: text, kind: 'l'}
+		if err := f.dispatchWriteEvent(ev); err != nil {
+			return posBefore, err
 		}
 	}
-	return len(p), nil
+}
+
+func (f *winEventFile) dispatchWriteEvent(ev wevent.Event) error {
+	win := f.win
+	switch ev.Type {
+	case 'x':
+		win.editor.execCh <- execReq{col: win.parent, win: win, text: ev.Text, kind: 'x'}
+	case 'l':
+		win.editor.execCh <- execReq{win: win, text: ev.Text, kind: 'l'}
+	}
+	return nil
 }
 
 func (f *winEventFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }

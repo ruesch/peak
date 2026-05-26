@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aleksana/peak/internal/wevent"
 	"github.com/gdamore/tcell/v2"
 )
 
@@ -66,6 +67,19 @@ func writeClose(t *testing.T, wfs *windowFs, name string, p string) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("close %s: %v", name, err)
 	}
+}
+
+// subReader adapts eventSub.readAt to io.Reader, tracking the offset.
+// Use it to feed wevent.Read directly without splitting on newlines.
+type subReader struct {
+	sub *eventSub
+	off int64
+}
+
+func (r *subReader) Read(p []byte) (int, error) {
+	n, err := r.sub.readAt(p, r.off)
+	r.off += int64(n)
+	return n, err
 }
 
 // eventReader reads successive lines from an eventSub, tracking offset between calls.
@@ -490,7 +504,6 @@ func TestWindowFsEventIDEvents(t *testing.T) {
 	defer f.Close()
 
 	ef := f.(*winEventFile)
-	er := &eventReader{sub: ef.sub}
 
 	// Trigger an insert via buffer edit on the main goroutine
 	e.Call(func() {
@@ -501,12 +514,27 @@ func TestWindowFsEventIDEvents(t *testing.T) {
 		)
 	})
 
-	line, ok := er.ReadLine(2 * time.Second)
-	if !ok {
+	sr := &subReader{sub: ef.sub}
+	evCh := make(chan wevent.Event, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		ev, err := wevent.Read(bufio.NewReader(sr))
+		if err != nil {
+			errCh <- err
+		} else {
+			evCh <- ev
+		}
+	}()
+
+	select {
+	case ev := <-evCh:
+		if ev.Origin != 'K' || ev.Type != 'I' || ev.Q0 != 0 || ev.Q1 != 1 || ev.Flag != 0 || ev.Text != "X" {
+			t.Errorf("event = %#v", ev)
+		}
+	case err := <-errCh:
+		t.Fatalf("parse event: %v", err)
+	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for I event")
-	}
-	if !strings.HasPrefix(line, "I ") {
-		t.Errorf("expected I event, got %q", line)
 	}
 }
 
@@ -552,7 +580,7 @@ func TestWindowFsEventSuppression(t *testing.T) {
 
 	// Simulate a middle-click execute via the window handler
 	e.Call(func() {
-		win.broadcastEvent('x', 0, 3, "Get")
+		win.broadcastEvent('M', 'x', 0, 3, 0, "Get")
 		// When subscribers present, the editor should NOT call onExec itself
 	})
 
@@ -586,8 +614,10 @@ func TestWindowFsEventBounceback(t *testing.T) {
 		return true
 	}
 
-	// Write an x event back — this re-dispatches it as if the tool decided to let the editor handle it.
-	evF.WriteString("x 0 3 Get\n")
+	// Write a v2 x event back. This re-dispatches it as if the tool decided to let the editor handle it.
+	if _, err := evF.Write(wevent.Format(wevent.Event{Origin: 'M', Type: 'x', Q0: 0, Q1: 3, Text: "Get"})); err != nil {
+		t.Fatalf("write v2 event: %v", err)
+	}
 
 	// execCh is async; wait for onExec to be called.
 	select {
@@ -597,6 +627,25 @@ func TestWindowFsEventBounceback(t *testing.T) {
 	}
 	_ = col
 	_ = e
+}
+
+func TestWindowFsEventWriteRejectsLegacy(t *testing.T) {
+	_, _, win, _ := setupWindowTest(t)
+	wfs := &windowFs{win: win}
+
+	evF, err := wfs.OpenFile("event", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open event rdwr: %v", err)
+	}
+	defer evF.Close()
+
+	n, err := evF.WriteString("x 0 3 Get\n")
+	if err == nil {
+		t.Fatalf("legacy event write returned nil error, n=%d", n)
+	}
+	if n != 0 {
+		t.Fatalf("legacy event write n = %d, want 0", n)
+	}
 }
 
 // ---- global lifecycle events ----

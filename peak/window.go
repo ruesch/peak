@@ -1,12 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aleksana/peak/internal/session"
+	"github.com/aleksana/peak/internal/wevent"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/uniseg"
 )
@@ -579,17 +579,12 @@ func (win *Window) hasEventSubs() bool {
 	return n > 0
 }
 
-// broadcastEvent delivers an event line to all open event file subscribers.
+// broadcastEvent delivers a counted event record to all open event file subscribers.
 // Caller must hold win.lk. deliver is non-blocking so holding lk is safe.
-func (win *Window) broadcastEvent(kind byte, q0, q1 int, text string) {
-	var line []byte
-	if text != "" {
-		line = []byte(fmt.Sprintf("%c %d %d %s\n", kind, q0, q1, text))
-	} else {
-		line = []byte(fmt.Sprintf("%c %d %d\n", kind, q0, q1))
-	}
+func (win *Window) broadcastEvent(origin, typ byte, q0, q1, flag int, text string) {
+	record := wevent.Format(wevent.Event{Origin: origin, Type: typ, Q0: q0, Q1: q1, Flag: flag, Text: text})
 	for _, s := range win.eventSubs {
-		s.deliver(line)
+		s.deliver(record)
 	}
 }
 
@@ -677,7 +672,7 @@ func newTermWindowFromSession(tag string, sess session.Session, parent *Column, 
 	win.body = term
 	if pty, ok := sess.(*ExternalPTY); ok {
 		pty.onResize = func(rows, cols int) {
-			win.broadcastEvent('R', rows, cols, "")
+			win.broadcastEvent('P', 'Z', rows, cols, 0, "")
 		}
 	}
 	return win, nil
@@ -695,10 +690,10 @@ func NewWindow(tag, body string, parent *Column, editor *Editor, x, y, w, h int,
 		win.addrQ0 = adjustPoint(win.addrQ0, q0, q1Old, q1New)
 		win.addrQ1 = adjustPoint(win.addrQ1, q0, q1Old, q1New)
 		if q1Old > q0 {
-			win.broadcastEvent('D', q0, q1Old, "")
+			win.broadcastEvent('K', 'D', q0, q1Old, 0, "")
 		}
 		if text != "" {
-			win.broadcastEvent('I', q0, q1New, text)
+			win.broadcastEvent('K', 'I', q0, q1New, 0, text)
 		}
 	}
 	return win
@@ -903,9 +898,9 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 		if word != "" {
 			q0, q1 = win.clickWordOffsets(target, mx, my, word)
 			if btns&tcell.Button3 != 0 {
-				win.broadcastEvent('x', q0, q1, word)
+				win.broadcastEvent('M', 'x', q0, q1, 0, word)
 			} else {
-				win.broadcastEvent('l', q0, q1, word)
+				win.broadcastEvent('M', 'l', q0, q1, 0, word)
 			}
 		}
 	}

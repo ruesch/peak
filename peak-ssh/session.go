@@ -13,6 +13,7 @@ import (
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/aleksana/peak/internal/vfs/afero"
+	"github.com/aleksana/peak/internal/wevent"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -400,34 +401,34 @@ func (fs *hostFs) hostDir(host string) afero.File {
 }
 
 // Unsupported mutations.
-func (fs *hostFs) Create(n string) (afero.File, error)                  { return nil, os.ErrPermission }
-func (fs *hostFs) Mkdir(n string, p os.FileMode) error                  { return os.ErrPermission }
-func (fs *hostFs) MkdirAll(n string, p os.FileMode) error               { return os.ErrPermission }
-func (fs *hostFs) Remove(n string) error                                 { return os.ErrPermission }
-func (fs *hostFs) RemoveAll(n string) error                              { return os.ErrPermission }
-func (fs *hostFs) Rename(o, n string) error                              { return os.ErrPermission }
-func (fs *hostFs) Chmod(n string, m os.FileMode) error                   { return os.ErrPermission }
-func (fs *hostFs) Chown(n string, u, g int) error                        { return os.ErrPermission }
-func (fs *hostFs) Chtimes(n string, a, m time.Time) error                { return os.ErrPermission }
-func (fs *hostFs) Name() string                                           { return "hostFs" }
+func (fs *hostFs) Create(n string) (afero.File, error)    { return nil, os.ErrPermission }
+func (fs *hostFs) Mkdir(n string, p os.FileMode) error    { return os.ErrPermission }
+func (fs *hostFs) MkdirAll(n string, p os.FileMode) error { return os.ErrPermission }
+func (fs *hostFs) Remove(n string) error                  { return os.ErrPermission }
+func (fs *hostFs) RemoveAll(n string) error               { return os.ErrPermission }
+func (fs *hostFs) Rename(o, n string) error               { return os.ErrPermission }
+func (fs *hostFs) Chmod(n string, m os.FileMode) error    { return os.ErrPermission }
+func (fs *hostFs) Chown(n string, u, g int) error         { return os.ErrPermission }
+func (fs *hostFs) Chtimes(n string, a, m time.Time) error { return os.ErrPermission }
+func (fs *hostFs) Name() string                           { return "hostFs" }
 
 // ---- sessStub ----
 
 type sessStub struct{}
 
-func (sessStub) Close() error                              { return nil }
-func (sessStub) Read(p []byte) (int, error)                { return 0, io.EOF }
-func (sessStub) ReadAt(p []byte, off int64) (int, error)   { return 0, io.EOF }
-func (sessStub) Seek(off int64, w int) (int64, error)      { return 0, nil }
-func (sessStub) Write(p []byte) (int, error)               { return 0, os.ErrPermission }
-func (sessStub) WriteAt(p []byte, _ int64) (int, error)    { return 0, os.ErrPermission }
-func (sessStub) WriteString(s string) (int, error)         { return 0, os.ErrPermission }
-func (sessStub) Readdir(n int) ([]os.FileInfo, error)      { return nil, nil }
-func (sessStub) Readdirnames(n int) ([]string, error)      { return nil, nil }
-func (sessStub) Sync() error                               { return nil }
-func (sessStub) Truncate(int64) error                      { return os.ErrPermission }
-func (sessStub) Name() string                              { return "" }
-func (sessStub) Stat() (os.FileInfo, error)                { return nil, os.ErrNotExist }
+func (sessStub) Close() error                            { return nil }
+func (sessStub) Read(p []byte) (int, error)              { return 0, io.EOF }
+func (sessStub) ReadAt(p []byte, off int64) (int, error) { return 0, io.EOF }
+func (sessStub) Seek(off int64, w int) (int64, error)    { return 0, nil }
+func (sessStub) Write(p []byte) (int, error)             { return 0, os.ErrPermission }
+func (sessStub) WriteAt(p []byte, _ int64) (int, error)  { return 0, os.ErrPermission }
+func (sessStub) WriteString(s string) (int, error)       { return 0, os.ErrPermission }
+func (sessStub) Readdir(n int) ([]os.FileInfo, error)    { return nil, nil }
+func (sessStub) Readdirnames(n int) ([]string, error)    { return nil, nil }
+func (sessStub) Sync() error                             { return nil }
+func (sessStub) Truncate(int64) error                    { return os.ErrPermission }
+func (sessStub) Name() string                            { return "" }
+func (sessStub) Stat() (os.FileInfo, error)              { return nil, os.ErrNotExist }
 
 // ---- ioFile ----
 
@@ -535,7 +536,7 @@ func (f *newFile) WriteAt(p []byte, _ int64) (int, error) {
 	f.resp = []byte(fmt.Sprintf("%s/%d\n", host, id))
 	return len(p), nil
 }
-func (f *newFile) Write(p []byte) (int, error) { return f.WriteAt(p, 0) }
+func (f *newFile) Write(p []byte) (int, error)             { return f.WriteAt(p, 0) }
 func (f *newFile) ReadAt(p []byte, off int64) (int, error) { return snapReadAt(f.resp, p, off) }
 
 // ---- runFile: write "<relpath>\n<cmd>\n" → read combined output ----
@@ -584,7 +585,7 @@ func (f *runFile) WriteAt(p []byte, _ int64) (int, error) {
 	}
 	return len(p), nil
 }
-func (f *runFile) Write(p []byte) (int, error) { return f.WriteAt(p, 0) }
+func (f *runFile) Write(p []byte) (int, error)             { return f.WriteAt(p, 0) }
 func (f *runFile) ReadAt(p []byte, off int64) (int, error) { return snapReadAt(f.resp, p, off) }
 
 // ---- bridgePeakWindow ----
@@ -659,15 +660,17 @@ func (fs *hostFs) bridgePeakWindow(sh *sshSession, title string) {
 
 	// peak resize events → remote PTY
 	go func() {
-		scanner := bufio.NewScanner(eventF)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "R ") {
-				var rows, cols int
-				fmt.Sscanf(line[2:], "%d %d", &rows, &cols)
-				if rows > 0 && cols > 0 {
-					sh.resize(rows, cols)
+		br := bufio.NewReader(eventF)
+		for {
+			ev, err := wevent.Read(br)
+			if err != nil {
+				if err == io.EOF {
+					break
 				}
+				break
+			}
+			if ev.Origin == 'P' && ev.Type == 'Z' && ev.Q0 > 0 && ev.Q1 > 0 {
+				sh.resize(ev.Q0, ev.Q1)
 			}
 		}
 		eventF.Close()

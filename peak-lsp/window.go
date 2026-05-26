@@ -3,13 +3,15 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
-	enry "github.com/go-enry/go-enry/v2"
 	"github.com/aleksana/peak/internal/vfs/afero"
+	"github.com/aleksana/peak/internal/wevent"
+	enry "github.com/go-enry/go-enry/v2"
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
@@ -134,13 +136,19 @@ func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 	// Initial highlight pass.
 	signal()
 
-	scanner := bufio.NewScanner(eventF)
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case strings.HasPrefix(line, "I "), strings.HasPrefix(line, "D "):
+	br := bufio.NewReader(eventF)
+	for {
+		ev, err := wevent.Read(br)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			break
+		}
+		switch ev.Type {
+		case 'I', 'D':
 			signal()
-		case strings.HasPrefix(line, "x "), strings.HasPrefix(line, "l "):
+		case 'x', 'l':
 			// Peak processes x/l events directly; no write-back needed.
 		}
 	}
