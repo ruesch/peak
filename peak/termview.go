@@ -326,7 +326,7 @@ func (tv *TermView) GetClickWord(mx, my int) string {
 	realRY := ry + tv.scroll.Pos
 
 	if tv.selection.Contains(rx, realRY, true) {
-		return tv.GetSelectedText()
+		return GetTextInSelection(termLineProvider{tv}, tv.selection, true)
 	}
 
 	limit := max(maxHistory, tv.h)
@@ -368,9 +368,20 @@ func (tv *TermView) GetScrollback() string {
 	defer tv.state.Unlock()
 	n := tv.getContentHeight()
 	var sb strings.Builder
+	buf := make([]rune, tv.w)
 	for y := 0; y < n; y++ {
-		line := strings.TrimRight(string(tv.getLine(y)), " \x00")
-		sb.WriteString(line)
+		for x := 0; x < tv.w; x++ {
+			r, _, _, _ := tv.state.Cell(x, y)
+			if r == 0 {
+				r = ' '
+			}
+			buf[x] = r
+		}
+		end := len(buf)
+		for end > 0 && buf[end-1] == ' ' {
+			end--
+		}
+		sb.WriteString(string(buf[:end]))
 		sb.WriteByte('\n')
 	}
 	return sb.String()

@@ -58,7 +58,7 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 		var snap []byte
 		fs.win.lk.Lock()
 		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
-			start, end := buf.orderedSelection()
+			start, end := buf.selection.Ordered()
 			q0 := buf.RuneOffsetOfPos(start.y, start.x)
 			q1 := buf.RuneOffsetOfPos(end.y, end.x)
 			snap = []byte(string(buf.RunesInRange(q0, q1)))
@@ -147,7 +147,7 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 		f := &winRdselFile{win: fs.win}
 		fs.win.lk.Lock()
 		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
-			start, end := buf.orderedSelection()
+			start, end := buf.selection.Ordered()
 			q0 := buf.RuneOffsetOfPos(start.y, start.x)
 			q1 := buf.RuneOffsetOfPos(end.y, end.x)
 			f.snap = []byte(string(buf.RunesInRange(q0, q1)))
@@ -158,7 +158,7 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 		f := &winWrselFile{win: fs.win}
 		fs.win.lk.Lock()
 		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
-			start, end := buf.orderedSelection()
+			start, end := buf.selection.Ordered()
 			f.q0 = buf.RuneOffsetOfPos(start.y, start.x)
 			f.q1 = buf.RuneOffsetOfPos(end.y, end.x)
 		}

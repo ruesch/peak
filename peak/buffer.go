@@ -147,27 +147,7 @@ func (b *Buffer) RunesInRange(q0, q1 int) []rune {
 	if q0 >= q1 {
 		return nil
 	}
-	start := b.RuneOffsetToCursor(q0)
-	end := b.RuneOffsetToCursor(q1)
-	var result []rune
-	for y := start.y; y <= end.y; y++ {
-		x1, x2 := 0, len(b.lines[y])
-		if y == start.y {
-			x1 = start.x
-		}
-		if y == end.y {
-			x2 = end.x
-		}
-		result = append(result, b.lines[y][x1:x2]...)
-		if y < end.y {
-			result = append(result, '\n')
-		}
-	}
-	return result
-}
-
-func (b *Buffer) orderedSelection() (Cursor, Cursor) {
-	return b.selection.Ordered()
+	return []rune(b.GetTextInRange(b.RuneOffsetToCursor(q0), b.RuneOffsetToCursor(q1)))
 }
 
 func (b *Buffer) GetText() string {
@@ -181,16 +161,9 @@ func (b *Buffer) GetText() string {
 	return sb.String()
 }
 
-func (b *Buffer) GetRunes() []rune {
-	var res []rune
-	for i, line := range b.lines {
-		res = append(res, line...)
-		if i < len(b.lines)-1 {
-			res = append(res, '\n')
-		}
-	}
-	return res
-}
+func (b *Buffer) GetRunes() []rune { return b.RunesInRange(0, b.Len()) }
+
+func (b *Buffer) bumpVersion() { b.version, b.nextVer = b.nextVer, b.nextVer+1 }
 
 func (b *Buffer) mutate(fn func()) {
 	b.saveState()
@@ -238,7 +211,7 @@ func (b *Buffer) SetText(content string) {
 	}
 	b.cursor = Cursor{0, 0}
 	b.ClearSelection()
-	b.version, b.nextVer = b.nextVer, b.nextVer+1
+	b.bumpVersion()
 	if b.onMutate != nil {
 		q1New := b.Len()
 		b.onMutate(0, q1Old, q1New, content)
@@ -269,7 +242,7 @@ func (b *Buffer) replace(start, end Cursor, content string) Cursor {
 	b.lines = append(b.lines[:start.y], append(mid, b.lines[end.y+1:]...)...)
 	b.cursor = Cursor{newEndCol, start.y + last}
 	b.ClearSelection()
-	b.version, b.nextVer = b.nextVer, b.nextVer+1
+	b.bumpVersion()
 
 	if b.onMutate != nil {
 		q1New := q0 + len([]rune(content))
@@ -294,7 +267,7 @@ func (b *Buffer) DeleteLine() {
 			b.cursor.y = min(b.cursor.y, len(b.lines)-1)
 			b.cursor.x = 0
 		}
-		b.version, b.nextVer = b.nextVer, b.nextVer+1
+		b.bumpVersion()
 	})
 }
 
@@ -323,7 +296,7 @@ func (b *Buffer) DeleteWordBefore() {
 func (b *Buffer) Insert(r rune) { b.mutate(func() { b.replace(b.cursor, b.cursor, string(r)) }) }
 func (b *Buffer) NewLine()      { b.mutate(func() { b.replace(b.cursor, b.cursor, "\n") }) }
 func (b *Buffer) DeleteSelection() {
-	b.mutate(func() { start, end := b.orderedSelection(); b.replace(start, end, "") })
+	b.mutate(func() { start, end := b.selection.Ordered(); b.replace(start, end, "") })
 }
 
 func (b *Buffer) Snarf() {
@@ -346,7 +319,7 @@ func (b *Buffer) Paste() {
 	}
 	b.mutate(func() {
 		if b.selection.Active {
-			start, end := b.orderedSelection()
+			start, end := b.selection.Ordered()
 			b.replace(start, end, text)
 		} else {
 			b.replace(b.cursor, b.cursor, text)

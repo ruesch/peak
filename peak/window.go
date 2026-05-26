@@ -298,7 +298,7 @@ func (tv *TextView) GetSelectedText() string {
 
 func (tv *TextView) prepareTyping() bool {
 	if tv.buffer.selection.Active {
-		start, _ := tv.buffer.orderedSelection()
+		start, _ := tv.buffer.selection.Ordered()
 		tv.typingStart = &Cursor{start.x, start.y}
 		return true
 	}
@@ -317,7 +317,7 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 				tv.buffer.SetSelection(*tv.typingStart, tv.buffer.cursor)
 				tv.typingStart = nil
 			} else if tv.buffer.selection.Active {
-				start, _ := tv.buffer.orderedSelection()
+				start, _ := tv.buffer.selection.Ordered()
 				tv.buffer.cursor, tv.typingStart = start, nil
 				tv.buffer.ClearSelection()
 			}

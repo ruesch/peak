@@ -701,7 +701,7 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	buf := tv.buffer
 	dot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
 	if buf.selection.Active {
-		s, end := buf.orderedSelection()
+		s, end := buf.selection.Ordered()
 		dot = Range{buf.CursorToRuneOffset(s), buf.CursorToRuneOffset(end)}
 	}
 
