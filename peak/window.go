@@ -668,7 +668,7 @@ func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, c
 func newTermWindowFromSession(tag string, sess session.Session, parent *Column, editor *Editor, x, y, w, h int, onExec func(*Column, *Window, string) bool) (*Window, error) {
 	win := newWindow(tag, parent, editor, x, y, w, h, onExec)
 	term, err := NewTermView(editor, sess, x+1, y+1, w-1, h-1, func() {
-		editor.deleteWindow(win)
+		editor.RemoveWindow(win)
 	})
 	if err != nil {
 		sess.Close()

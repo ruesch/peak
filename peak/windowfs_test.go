@@ -628,7 +628,7 @@ func TestLifecycleEventsNewClose(t *testing.T) {
 		t.Errorf("new event missing filename: %q", line)
 	}
 
-	e.deleteWindow(win)
+	e.RemoveWindow(win)
 	line, ok = er.ReadLine(2 * time.Second)
 	if !ok {
 		t.Fatal("timeout waiting for close event")
@@ -870,7 +870,7 @@ func TestEventScannerIntegration(t *testing.T) {
 		t.Fatal("timeout waiting for new event via scanner")
 	}
 
-	e.deleteWindow(win)
+	e.RemoveWindow(win)
 	select {
 	case line := <-received:
 		if !strings.HasPrefix(line, "close ") {
@@ -881,4 +881,36 @@ func TestEventScannerIntegration(t *testing.T) {
 	}
 
 	sub.close()
+}
+
+func TestRemoveWindowUnmountsFromVFS(t *testing.T) {
+	e, _, win, _ := setupWindowTest(t)
+	mountPath := fmt.Sprintf("/peak/%d", win.ID)
+	if mp, _ := e.ninep.FindMount(mountPath); mp != mountPath {
+		t.Fatal("window not mounted before RemoveWindow")
+	}
+	e.RemoveWindow(win)
+	if mp, _ := e.ninep.FindMount(mountPath); mp == mountPath {
+		t.Errorf("window still mounted at %s after RemoveWindow", mountPath)
+	}
+}
+
+func TestRemoveColumnUnmountsAllWindows(t *testing.T) {
+	e, col, _, _ := setupWindowTest(t)
+	win2 := col.AddWindow(" /tmp/col2.txt Get Put Del ", "")
+	ids := []int{col.windows[0].ID, win2.ID}
+
+	e.RemoveColumn(col)
+
+	for _, id := range ids {
+		mountPath := fmt.Sprintf("/peak/%d", id)
+		if mp, _ := e.ninep.FindMount(mountPath); mp == mountPath {
+			t.Errorf("window %d still mounted after RemoveColumn", id)
+		}
+	}
+	for _, c := range e.columns {
+		if c == col {
+			t.Error("column still present in editor after RemoveColumn")
+		}
+	}
 }

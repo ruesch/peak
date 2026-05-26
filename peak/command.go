@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -371,17 +372,17 @@ func (e *Editor) cmdDel(win *Window) {
 		return
 	}
 
-	e.deleteWindow(target)
+	e.RemoveWindow(target)
 }
 
 func (e *Editor) cmdDelete(win *Window) {
 	target := e.getTargetWindow(win)
 	if target != nil {
-		e.deleteWindow(target)
+		e.RemoveWindow(target)
 	}
 }
 
-func (e *Editor) deleteWindow(target *Window) {
+func (e *Editor) RemoveWindow(target *Window) {
 	e.ninep.UmountWindow(target)
 	col := target.parent
 	for i, w := range col.windows {
@@ -820,20 +821,23 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 }
 
 func (e *Editor) RemoveColumn(c *Column) {
-	for i, col := range e.columns {
-		if col == c {
-			e.columns = append(e.columns[:i], e.columns[i+1:]...)
-			e.Resize()
-			if len(e.columns) > 0 {
-				if len(e.columns[0].windows) > 0 {
-					e.ActivateWindow(e.columns[0].windows[0])
-				} else {
-					e.active, e.focusedView = nil, e.columns[0].tag
-				}
-			} else {
-				e.active, e.focusedView = nil, e.tag
-			}
-			break
-		}
+	for len(c.windows) > 0 {
+		e.RemoveWindow(c.windows[0])
+	}
+	i := slices.Index(e.columns, c)
+	if i < 0 {
+		return
+	}
+	e.columns = slices.Delete(e.columns, i, i+1)
+	e.Resize()
+	if len(e.columns) == 0 {
+		e.active, e.focusedView = nil, e.tag
+		return
+	}
+	first := e.columns[0]
+	if len(first.windows) > 0 {
+		e.ActivateWindow(first.windows[0])
+	} else {
+		e.active, e.focusedView = nil, first.tag
 	}
 }

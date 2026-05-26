@@ -43,6 +43,7 @@ func (fs *CompositeFs) Umount(path string) {
 	fs.mu.Lock()
 	delete(fs.mounts, cleanPath)
 	fs.mu.Unlock()
+	_ = fs.root.Remove(cleanPath)
 }
 
 func (fs *CompositeFs) getMountAndFs(name string) (mountPath string, mountedFs afero.Fs, relPath string) {
