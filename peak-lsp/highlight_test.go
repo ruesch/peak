@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/aleksana/peak/internal/wevent"
@@ -303,10 +304,10 @@ func TestResetIncrementalStateNilTreeNoop(t *testing.T) {
 
 func TestResetAfterUnknownBodyChangeClearsBodyTreeAndSnap(t *testing.T) {
 	cur := &highlightState{
-		body:         []byte("old"),
-		tree:         testTreeForRelease(),
-		snap:         []byte("old"),
-		lang:         "Go",
+		body: []byte("old"),
+		tree: testTreeForRelease(),
+		snap: []byte("old"),
+		lang: "Go",
 	}
 	resetAfterUnknownBodyChange(cur)
 	if cur.body != nil || cur.tree != nil || cur.snap != nil {
@@ -314,6 +315,279 @@ func TestResetAfterUnknownBodyChangeClearsBodyTreeAndSnap(t *testing.T) {
 	}
 	if cur.lang != "Go" {
 		t.Fatalf("lang = %q, want Go", cur.lang)
+	}
+}
+
+func TestOrdinaryInsertDoesNotForceMirrorReset(t *testing.T) {
+	cur := &highlightState{body: []byte("abc"), tree: testTreeForRelease(), gen: 5}
+	if !applyEventToIncrementalState(cur, wevent.Event{Origin: 'K', Type: 'I', Q0: 1, Q1: 1, Text: "X"}) {
+		t.Fatal("applyEventToIncrementalState returned false")
+	}
+	if cur.body == nil {
+		t.Fatal("body is nil after ordinary insert; should remain set")
+	}
+	if cur.tree == nil {
+		t.Fatal("tree is nil after ordinary insert; should remain set")
+	}
+	if cur.gen != 5 {
+		t.Fatalf("gen = %d, want 5 (unchanged by ordinary edit)", cur.gen)
+	}
+}
+
+func TestOrdinaryDeleteDoesNotForceMirrorReset(t *testing.T) {
+	cur := &highlightState{body: []byte("abc"), tree: testTreeForRelease(), gen: 5}
+	if !applyEventToIncrementalState(cur, wevent.Event{Origin: 'K', Type: 'D', Q0: 1, Q1: 2}) {
+		t.Fatal("applyEventToIncrementalState returned false")
+	}
+	if cur.body == nil {
+		t.Fatal("body is nil after ordinary delete; should remain set")
+	}
+	if cur.tree == nil {
+		t.Fatal("tree is nil after ordinary delete; should remain set")
+	}
+	if cur.gen != 5 {
+		t.Fatalf("gen = %d, want 5 (unchanged by ordinary edit)", cur.gen)
+	}
+}
+
+func TestInvalidEditIncrementsGen(t *testing.T) {
+	cur := &highlightState{body: []byte("abc"), tree: testTreeForRelease(), gen: 5}
+	if applyEventToIncrementalState(cur, wevent.Event{Origin: 'K', Type: 'D', Q0: 2, Q1: 10}) {
+		t.Fatal("applyEventToIncrementalState returned true for invalid edit")
+	}
+	if cur.gen != 6 {
+		t.Fatalf("gen = %d, want 6 (incremented by invalid edit)", cur.gen)
+	}
+	if cur.body != nil || cur.tree != nil {
+		t.Fatalf("state after invalid edit = body=%q tree=%v; want nil/nil", cur.body, cur.tree)
+	}
+}
+
+func TestInvalidateHighlightStateIncrementsGenAndClears(t *testing.T) {
+	cur := &highlightState{
+		body: []byte("old"),
+		tree: testTreeForRelease(),
+		snap: []byte("ol"),
+		gen:  3,
+		lang: "Go",
+	}
+	invalidateHighlightState(cur)
+	if cur.gen != 4 {
+		t.Fatalf("gen = %d, want 4", cur.gen)
+	}
+	if cur.body != nil || cur.tree != nil {
+		t.Fatalf("state after invalidate = body=%q tree=%v; want nil/nil", cur.body, cur.tree)
+	}
+	if cur.lang != "Go" {
+		t.Fatalf("lang = %q, want Go", cur.lang)
+	}
+}
+
+func TestInvalidateHighlightStateAlsoClearsSnap(t *testing.T) {
+	cur := &highlightState{
+		body: []byte("old"),
+		tree: testTreeForRelease(),
+		snap: []byte("ol"),
+		gen:  3,
+		lang: "Go",
+	}
+	invalidateHighlightState(cur)
+	if cur.snap != nil {
+		t.Fatalf("snap = %q, want nil after invalidate", cur.snap)
+	}
+}
+
+func TestSnapshotHighlightStateCopiesBodyAndTree(t *testing.T) {
+	tree := testTreeForRelease()
+	cur := &highlightState{
+		body: []byte("hello"),
+		tree: tree,
+		hl:   &gotreesitter.Highlighter{},
+		gen:  7,
+		lang: "Go",
+	}
+	snap := snapshotHighlightState(cur)
+
+	if !bytes.Equal(snap.body, []byte("hello")) {
+		t.Fatalf("snap.body = %q, want %q", snap.body, "hello")
+	}
+	if snap.gen != 7 {
+		t.Fatalf("snap.gen = %d, want 7", snap.gen)
+	}
+	if snap.tree == nil {
+		t.Fatal("snap.tree is nil, want a copy of the original tree")
+	}
+	if snap.hl == nil {
+		t.Fatal("snap.hl is nil, want the highlighter")
+	}
+}
+
+func TestSnapshotHighlightStateKeepsOriginalTree(t *testing.T) {
+	tree := testTreeForRelease()
+	cur := &highlightState{
+		body: []byte("hello"),
+		tree: tree,
+		gen:  7,
+	}
+	snapshotHighlightState(cur)
+
+	if cur.tree != tree {
+		t.Fatal("cur.tree should keep the original tree after snapshot")
+	}
+	if cur.body == nil {
+		t.Fatal("cur.body should not be nil after snapshot")
+	}
+}
+
+func TestSnapshotHighlightStateWithNilTree(t *testing.T) {
+	cur := &highlightState{
+		body: []byte("hello"),
+		tree: nil,
+		gen:  2,
+	}
+	snap := snapshotHighlightState(cur)
+
+	if snap.tree != nil {
+		t.Fatal("snap.tree should be nil when cur.tree was nil")
+	}
+	if !bytes.Equal(snap.body, []byte("hello")) {
+		t.Fatalf("snap.body = %q, want %q", snap.body, "hello")
+	}
+}
+
+func TestSnapshotBodyIsIndependentCopy(t *testing.T) {
+	cur := &highlightState{
+		body: []byte("abc"),
+		tree: nil,
+		gen:  1,
+	}
+	snap := snapshotHighlightState(cur)
+	cur.body[0] = 'X'
+
+	if snap.body[0] != 'a' {
+		t.Fatal("modifying cur.body affected snap.body; body was not copied")
+	}
+}
+
+func TestCommitHighlightTreeSuccess(t *testing.T) {
+	oldTree := testTreeForRelease()
+	cur := &highlightState{body: []byte("abc"), tree: oldTree, gen: 5}
+	snap := highlightSnapshot{body: []byte("abc"), gen: 5}
+	newTree := testTreeForRelease()
+
+	if !commitHighlightTree(cur, newTree, snap) {
+		t.Fatal("commitHighlightTree returned false, want true")
+	}
+	if cur.tree != newTree {
+		t.Fatal("cur.tree was not set to the committed tree")
+	}
+	if oldTree.RootNode() != nil {
+		t.Fatal("old tree should have been released after successful replacement")
+	}
+}
+
+func TestCommitHighlightTreeKeepsSameTree(t *testing.T) {
+	tree := testTreeForRelease()
+	cur := &highlightState{body: []byte("abc"), tree: tree, gen: 5}
+	snap := highlightSnapshot{body: []byte("abc"), gen: 5}
+
+	if !commitHighlightTree(cur, tree, snap) {
+		t.Fatal("commitHighlightTree returned false, want true")
+	}
+	if cur.tree != tree {
+		t.Fatal("cur.tree changed when committing the same tree")
+	}
+	if tree.RootNode() == nil {
+		t.Fatal("same tree should not have been released")
+	}
+}
+
+func TestCommitHighlightTreeRejectsGenMismatch(t *testing.T) {
+	cur := &highlightState{body: []byte("abc"), gen: 99}
+	snap := highlightSnapshot{body: []byte("abc"), gen: 5}
+	newTree := testTreeForRelease()
+
+	if commitHighlightTree(cur, newTree, snap) {
+		t.Fatal("commitHighlightTree returned true on gen mismatch, want false")
+	}
+	if cur.tree != nil {
+		t.Fatal("cur.tree should be nil after rejected commit")
+	}
+	if newTree.RootNode() != nil {
+		t.Fatal("rejected tree should have been released")
+	}
+}
+
+func TestCommitHighlightTreeRejectsBodyChange(t *testing.T) {
+	cur := &highlightState{body: []byte("abcXYZ"), gen: 5}
+	snap := highlightSnapshot{body: []byte("abc"), gen: 5}
+	newTree := testTreeForRelease()
+
+	if commitHighlightTree(cur, newTree, snap) {
+		t.Fatal("commitHighlightTree returned true on body change, want false")
+	}
+	if cur.tree != nil {
+		t.Fatal("cur.tree should be nil after rejected commit")
+	}
+	if newTree.RootNode() != nil {
+		t.Fatal("rejected tree should have been released")
+	}
+}
+
+func TestCommitHighlightTreeWithNilTree(t *testing.T) {
+	cur := &highlightState{body: []byte("abc"), gen: 5}
+	snap := highlightSnapshot{body: []byte("abc"), gen: 5}
+
+	if !commitHighlightTree(cur, nil, snap) {
+		t.Fatal("commitHighlightTree returned false for nil tree commit")
+	}
+	if cur.tree != nil {
+		t.Fatal("cur.tree should be nil after committing nil tree")
+	}
+}
+
+func TestReleaseSnapshotTreeReleasesCopy(t *testing.T) {
+	tree := testTreeForRelease()
+	snap := highlightSnapshot{tree: tree}
+	releaseSnapshotTree(snap)
+	if tree.RootNode() != nil {
+		t.Fatal("snapshot tree root still present after release")
+	}
+}
+
+func TestReleaseSnapshotTreeNilNoop(t *testing.T) {
+	releaseSnapshotTree(highlightSnapshot{})
+}
+
+func TestBuildColorSpanText(t *testing.T) {
+	body := []byte("package main\nvar café = 1\n")
+	ranges := []gotreesitter.HighlightRange{
+		{StartByte: 0, EndByte: 7, Capture: "keyword"},
+		{StartByte: 13, EndByte: 16, Capture: "keyword"},
+		{StartByte: 17, EndByte: 22, Capture: "variable"},
+		{StartByte: 25, EndByte: 26, Capture: "number"},
+	}
+
+	got := buildColorSpanText(body, ranges)
+	want := "0 7 keyword\n13 16 keyword\n17 21 variable\n24 25 number\n"
+	if got != want {
+		t.Fatalf("buildColorSpanText() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildColorSpanTextSkipsInvalidAndUnknownRanges(t *testing.T) {
+	body := []byte("abc")
+	ranges := []gotreesitter.HighlightRange{
+		{StartByte: 0, EndByte: 1, Capture: "unknown_capture"},
+		{StartByte: 2, EndByte: 2, Capture: "keyword"},
+		{StartByte: 0, EndByte: 4, Capture: "keyword"},
+		{StartByte: 1, EndByte: 3, Capture: "string"},
+	}
+
+	got := buildColorSpanText(body, ranges)
+	want := "1 3 string\n"
+	if got != want {
+		t.Fatalf("buildColorSpanText() = %q, want %q", got, want)
 	}
 }
 

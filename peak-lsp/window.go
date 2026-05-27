@@ -67,9 +67,8 @@ func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 				}
 			}
 
-			body := cur.body
 			if cur.snap == nil {
-				snap := body
+				snap := cur.body
 				if len(snap) > 8192 {
 					snap = snap[:8192]
 				}
@@ -83,21 +82,30 @@ func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 					}
 				}
 			}
-			s := cur
+
+			snap := snapshotHighlightState(&cur)
 			mu.Unlock()
 
-			if s.hl == nil {
+			if snap.hl == nil {
+				if snap.tree != nil {
+					snap.tree.Release()
+				}
 				writeColorSpans(fs, base, nil, nil)
 				continue
 			}
 
-			ranges, next := s.hl.HighlightIncremental(body, s.tree)
+			ranges, next := snap.hl.HighlightIncremental(snap.body, snap.tree)
+			releaseSnapshotTree(snap)
 
 			mu.Lock()
-			cur.tree = next
+			if !commitHighlightTree(&cur, next, snap) {
+				mu.Unlock()
+				signal()
+				continue
+			}
 			mu.Unlock()
 
-			writeColorSpans(fs, base, body, ranges)
+			writeColorSpans(fs, base, snap.body, ranges)
 		}
 	}()
 
@@ -121,7 +129,7 @@ func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 				if lang != cur.lang {
 					cur.hl = hl
 					cur.lang = lang
-					resetIncrementalState(&cur)
+					invalidateHighlightState(&cur)
 				}
 				mu.Unlock()
 
@@ -148,6 +156,11 @@ func watchWindow(fs afero.Fs, id int, retitleCh <-chan string) {
 		case 'I', 'D':
 			mu.Lock()
 			applyEventToIncrementalState(&cur, ev)
+			mu.Unlock()
+			signal()
+		case 'Z':
+			mu.Lock()
+			invalidateHighlightState(&cur)
 			mu.Unlock()
 			signal()
 		case 'x', 'l':
@@ -219,8 +232,15 @@ func writeColorSpans(fs afero.Fs, base string, body []byte, ranges []gotreesitte
 	}
 	defer colorF.Close()
 
+	text := buildColorSpanText(body, ranges)
+	if text != "" {
+		colorF.WriteString(text)
+	}
+}
+
+func buildColorSpanText(body []byte, ranges []gotreesitter.HighlightRange) string {
 	if len(ranges) == 0 {
-		return
+		return ""
 	}
 
 	byteToRune := buildByteToRune(body)
@@ -233,7 +253,7 @@ func writeColorSpans(fs afero.Fs, base string, body []byte, ranges []gotreesitte
 		}
 		start := int(r.StartByte)
 		end := int(r.EndByte)
-		if start >= len(byteToRune) || end > len(byteToRune) {
+		if start >= len(byteToRune) || end >= len(byteToRune) {
 			continue
 		}
 		q0, q1 := byteToRune[start], byteToRune[end]
@@ -242,9 +262,7 @@ func writeColorSpans(fs afero.Fs, base string, body []byte, ranges []gotreesitte
 		}
 		fmt.Fprintf(&sb, "%d %d %s\n", q0, q1, attr)
 	}
-	if sb.Len() > 0 {
-		colorF.WriteString(sb.String())
-	}
+	return sb.String()
 }
 
 // captureToAttr maps a tree-sitter capture name to a peak colour attribute.
