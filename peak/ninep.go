@@ -126,12 +126,13 @@ func (p *NineP) Umount(path string) {
 	p.mountMu.Unlock()
 }
 
-// Bind overlays a local path onto dest in the VFS. Callers that want the bind
-// to appear in /bind should record it themselves via record().
+// Bind overlays a source path onto dest in the VFS. The source may be any
+// path reachable through the composite VFS (internal or external). Callers
+// that want the bind to appear in /bind should record it via record().
 func (p *NineP) Bind(src, dest string) error {
 	src = resolvePath(src)
 	dest = resolvePath(dest)
-	p.vfs.Mount(dest, afero.NewBasePathFs(afero.NewOsFs(), src))
+	p.vfs.Mount(dest, afero.NewBasePathFs(p.vfs, src))
 	return nil
 }
 
