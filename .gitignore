@@ -1,4 +1,8 @@
 edwood/
 /peak/peak
 /peak-ssh/peak-ssh
+/peak-lsp/peak-lsp
+/peak-git/peak-git
 /result*
+/.direnv
+/.envrc
