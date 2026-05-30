@@ -95,6 +95,9 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 
 	tagStyle := tcell.StyleDefault.Background(e.theme.GlobalTagBG).Foreground(e.theme.GlobalTagFG)
 	e.tag = NewTextView(" NewCol Help Exit ", 0, 0, e.w, 1, tagStyle, true, false)
+	e.tag.style = func() tcell.Style {
+		return tcell.StyleDefault.Background(e.theme.GlobalTagBG).Foreground(e.theme.GlobalTagFG)
+	}
 	e.tag.theme = &e.theme
 	return e, s
 }
