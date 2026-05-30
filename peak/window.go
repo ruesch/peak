@@ -646,6 +646,10 @@ func (w *Window) WalkDraw(s tcell.Screen) {
 		handleColor = w.editor.theme.HandleError
 	} else if w.IsDirty() {
 		handleColor = w.editor.theme.HandleDirty
+	} else if w.hasVersion {
+		handleColor = w.editor.theme.HandleWritable
+	} else if !w.isDir {
+		handleColor = w.editor.theme.HandleUnwritable
 	}
 	w.handle.color = handleColor
 
