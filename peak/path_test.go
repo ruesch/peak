@@ -176,7 +176,7 @@ func TestReadFileOrDir_IgnoresWrongSize(t *testing.T) {
 	e.ninep.vfs.Mount(mountPath, &wrongSizeFs{Fs: mem})
 
 	// Call readFileOrDir directly (bypasses the async Get command).
-	got, isDir, err := readFileOrDir(mountPath + "/test.txt")
+	got, isDir, _, err := readFileOrDir(mountPath + "/test.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -208,12 +208,12 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 
 	// 2. Try to open new window
 	go func() {
-		content, isDir, err := readFileOrDir(full)
+		content, isDir, writable, err := readFileOrDir(full)
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			if err == nil {
 				target := e.getTargetColumn(nil, win)
 				if target != nil {
-					e.createWindow(target, full, content, isDir, line, col)
+					e.createWindow(target, full, content, isDir, writable, line, col)
 				}
 			} else {
 				if binaryFallback != nil && err.Error() == "binary file" {
@@ -228,7 +228,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 	}()
 }
 
-func (e *Editor) createWindow(target *Column, full string, content string, isDir bool, line, col int) *Window {
+func (e *Editor) createWindow(target *Column, full string, content string, isDir bool, writable bool, line, col int) *Window {
 	if isDir {
 		full = toDir(full)
 	}
@@ -236,7 +236,7 @@ func (e *Editor) createWindow(target *Column, full string, content string, isDir
 	newWin := target.AddWindow(" "+tagPath+" Get Put Undo Redo Snarf Zerox Del ", content)
 	e.ActivateWindow(newWin)
 	newWin.isDir = isDir
-	newWin.hasVersion = hasVersion(full)
+	newWin.hasVersion = writable
 	if tv := newWin.bodyTextView(); tv != nil {
 		newWin.savedVersion = tv.buffer.version
 		if line >= 0 {
@@ -296,7 +296,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 	target := e.getTargetWindow(win)
 	if target == nil {
 		col := e.getTargetColumn(nil, win)
-		target = e.createWindow(col, "./untitled.txt", "", false, -1, 0)
+		target = e.createWindow(col, "./untitled.txt", "", false, true, -1, 0)
 	}
 	arg := e.getArg(target, cmd)
 	if arg == "" {
@@ -304,7 +304,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 	}
 	path := e.resolvePathWithContext(target, arg)
 	go func() {
-		content, isDir, err := readFileOrDir(path)
+		content, isDir, writable, err := readFileOrDir(path)
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			if err == nil {
 				if isDir {
@@ -314,7 +314,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 				if tv := target.bodyTextView(); tv != nil {
 					tv.buffer.SetText(content)
 					target.isDir = isDir
-					target.hasVersion = hasVersion(path)
+					target.hasVersion = writable
 					target.savedVersion = tv.buffer.version
 					target.warnedVersion = target.savedVersion
 					e.ninep.BroadcastGet(target)
@@ -350,7 +350,7 @@ func (e *Editor) cmdPut(win *Window, cmd string) {
 				if err != nil {
 					e.showError(target.parent, target, "", normalizeError(err))
 				} else {
-					target.hasVersion = hasVersion(path)
+					target.hasVersion = true
 					target.savedVersion = version
 					target.warnedVersion = version
 					e.ninep.BroadcastPut(target)
@@ -438,7 +438,7 @@ func (e *Editor) cmdDelcol(col *Column, win *Window) {
 func (e *Editor) cmdNewCol() {
 	nc := NewColumn(e.w, 1, 0, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, nc)
-	e.createWindow(nc, "./untitled.txt", "", false, -1, 0)
+	e.createWindow(nc, "./untitled.txt", "", false, true, -1, 0)
 	e.Resize()
 }
 
@@ -451,7 +451,7 @@ func (e *Editor) cmdNew(col *Column, win *Window, cmd string) {
 
 	targetCol := e.getTargetColumn(col, win)
 	if targetCol != nil {
-		e.createWindow(targetCol, "./untitled.txt", "", false, -1, 0)
+		e.createWindow(targetCol, "./untitled.txt", "", false, true, -1, 0)
 	}
 }
 

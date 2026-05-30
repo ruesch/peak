@@ -67,20 +67,6 @@ func findWinByID(id int) *Window {
 	return nil
 }
 
-func hasVersion(path string) bool {
-	if isSpecial(path) {
-		return false
-	}
-	// Window namespace files are virtual — they have no on-disk version.
-	if _, _, ok := parseWinPath(path); ok {
-		return false
-	}
-	if isDir(path) {
-		return false
-	}
-	return !isPeakPath(path)
-}
-
 func isDir(path string) bool {
 	if isSpecial(path) {
 		return false
@@ -191,21 +177,22 @@ func writeFile(path string, data []byte) error {
 	return afero.WriteFile(getVFS(), path, data, 0644)
 }
 
-// readFileOrDir returns the content of a file or a listing if it's a directory.
-// It is called from a background goroutine, so editor.Call inside VFS reads is safe.
-func readFileOrDir(path string) (string, bool, error) {
+// readFileOrDir returns the content of a file or a listing if it's a directory,
+// and whether the file is writable (owner-write permission bit set).
+func readFileOrDir(path string) (string, bool, bool, error) {
 	fi, err := getVFS().Stat(path)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
+	writable := !fi.IsDir() && fi.Mode().Perm()&0200 != 0
 	if fi.IsDir() {
 		content, err := listDir(path)
-		return content, true, err
+		return content, true, writable, err
 	}
 
 	f, err := getVFS().Open(path)
 	if err != nil {
-		return "", false, err
+		return "", false, writable, err
 	}
 	defer f.Close()
 
@@ -214,22 +201,22 @@ func readFileOrDir(path string) (string, bool, error) {
 		data := make([]byte, size)
 		n, err := f.ReadAt(data, 0)
 		if err != nil && err != io.EOF {
-			return "", false, err
+			return "", false, writable, err
 		}
 		if int64(n) < int64(len(data)) || err == io.EOF {
 			if err := isBinary(data[:n]); err != nil {
-				return "", false, err
+				return "", false, writable, err
 			}
-			return string(data[:n]), false, nil
+			return string(data[:n]), false, writable, nil
 		}
 		if err := isBinary(data); err != nil {
-			return "", false, err
+			return "", false, writable, err
 		}
 		content, err := readFileTail(f, data, int64(len(data)))
-		return content, false, err
+		return content, false, writable, err
 	}
 	content, err := readFileTail(f, nil, 0)
-	return content, false, err
+	return content, false, writable, err
 }
 
 func isBinary(data []byte) error {

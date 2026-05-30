@@ -177,15 +177,15 @@ func (e *Editor) Init(numCols int, args []string) {
 	if len(args) > 0 {
 		for _, arg := range args {
 			full := e.resolvePathWithContext(nil, arg)
-			content, isDir, err := readFileOrDir(full)
+			content, isDir, writable, err := readFileOrDir(full)
 			if err == nil {
-				e.createWindow(e.columns[0], full, content, isDir, -1, 0)
+				e.createWindow(e.columns[0], full, content, isDir, writable, -1, 0)
 			}
 		}
 	} else {
 		dir := getwd()
 		lastCol := e.columns[len(e.columns)-1]
-		win := e.createWindow(lastCol, dir, "", true, -1, 0)
+		win := e.createWindow(lastCol, dir, "", true, true, -1, 0)
 
 		// Initial directory listing
 		e.Execute(lastCol, win, "Get")
