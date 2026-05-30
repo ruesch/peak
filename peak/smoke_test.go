@@ -1213,3 +1213,49 @@ func TestDelcolLeavesBlank(t *testing.T) {
 		}
 	}
 }
+
+func TestDelcolNarrowNoExtraTagRow(t *testing.T) {
+	// Narrow terminal (width < height). Two columns make each half-width,
+	// which wraps the window tag to multiple lines. After deleting one
+	// column the survivor gets full width, its tag un-wraps to 1 line,
+	// and there must be no stale tag-background rows.
+	e, s := setupTest(t, 80, 100)
+
+	col0 := NewColumn(0, 1, e.w/2, e.h-1, e, e.Execute)
+	col1 := NewColumn(e.w/2, 1, e.w-e.w/2, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col0, col1)
+	w := col1.AddWindow("", "")
+	e.ActivateWindow(w)
+
+	e.Resize()
+	e.Draw()
+	s.Show()
+
+	if len(e.columns) != 2 {
+		t.Fatal("expected 2 columns")
+	}
+
+	// Programmatically delete col0 to avoid searching for truncated tag text.
+	e.RemoveColumn(col0)
+
+	if len(e.columns) != 1 {
+		t.Fatalf("expected 1 column after RemoveColumn, got %d", len(e.columns))
+	}
+
+	e.Resize()
+	e.Draw()
+
+	// Handle must be exactly 1 pixel high (tag un-wrapped to one line).
+	if w.handle.h != 1 {
+		t.Errorf("handle height = %d, want 1", w.handle.h)
+	}
+
+	// The row immediately below the window tag must have body background,
+	// not tag background — no stale blank tag row.
+	bodyRow := w.y + w.tagHeight()
+	_, _, style, _ := s.GetContent(w.x+1, bodyRow)
+	_, bg, _ := style.Decompose()
+	if bg == e.theme.TagBG {
+		t.Errorf("row %d below window tag has TagBG background — stale extra tag row", bodyRow)
+	}
+}

@@ -925,8 +925,9 @@ func (win *Window) tagHeight() int {
 }
 
 func (win *Window) reflow() {
+	win.tag.Resize(win.x+1, win.y, win.w-1, 0)
 	th := win.tagHeight()
-	win.tag.Resize(win.x+1, win.y, win.w-1, th)
+	win.tag.h = th
 	win.handle.Resize(win.x, win.y, 1, th)
 	bh := max(0, win.h-th)
 	win.bodyView.Resize(win.x, win.y+th, win.w, bh)
