@@ -49,8 +49,10 @@ func NewNineP(e *Editor) *NineP {
 	docFs := afero.FromIOFS{FS: docFS}
 	p.vfs.Mount("/peak/doc", afero.NewBasePathFs(docFs, "doc"))
 
-	themeDocFs := afero.FromIOFS{FS: themeFS}
-	p.vfs.Mount("/peak/theme", afero.NewBasePathFs(themeDocFs, "theme"))
+	themeLayer := afero.NewMemMapFs()
+	themeLayer.Mkdir("/", 0755)
+	themeBase := afero.NewBasePathFs(afero.FromIOFS{FS: themeFS}, "theme")
+	p.vfs.Mount("/peak/theme", afero.NewCopyOnWriteFs(themeBase, themeLayer))
 
 	p.vfs.Mount("/peak/mirage", afero.NewMemMapFs())
 
