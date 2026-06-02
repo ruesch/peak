@@ -11,6 +11,15 @@ import (
 	"github.com/rivo/uniseg"
 )
 
+type WinKind int
+
+const (
+	WinFile WinKind = iota // regular file (editable, tracks dirty)
+	WinDir                 // directory listing
+	WinOut                 // output/error sink
+	WinTerm                // terminal emulator
+)
+
 type VisualLine struct {
 	BufferLine int
 	Start, End int
@@ -624,8 +633,8 @@ type Window struct {
 	onExec         func(*Column, *Window, string) bool
 	explicitHeight int
 
-	isDir         bool
-	hasVersion    bool
+	kind          WinKind
+	writable      bool
 	savedVersion  int
 	warnedVersion int
 
@@ -658,14 +667,17 @@ func (w *Window) WalkDraw(s tcell.Screen) {
 	w.tag.underlineLast = w.editor.active == w
 
 	handleColor := w.editor.theme.Handle
-	if fn := w.GetFilename(); isSpecial(fn) {
+	switch w.kind {
+	case WinOut, WinTerm:
 		handleColor = w.editor.theme.HandleError
-	} else if w.IsDirty() {
-		handleColor = w.editor.theme.HandleDirty
-	} else if w.hasVersion {
-		handleColor = w.editor.theme.HandleWritable
-	} else if !w.isDir {
-		handleColor = w.editor.theme.HandleUnwritable
+	case WinFile:
+		if w.IsDirty() {
+			handleColor = w.editor.theme.HandleDirty
+		} else if w.writable {
+			handleColor = w.editor.theme.HandleWritable
+		} else {
+			handleColor = w.editor.theme.HandleUnwritable
+		}
 	}
 	w.handle.color = handleColor
 
@@ -829,6 +841,7 @@ func newTermWindowFromSession(tag string, sess session.Session, parent *Column, 
 		sess.Close()
 		return nil, err
 	}
+	win.kind = WinTerm
 	win.body = term
 	win.bodyView.content = term
 	if pty, ok := sess.(*ExternalPTY); ok {
@@ -872,7 +885,7 @@ func (win *Window) bodyTextView() *TextView {
 }
 
 func (win *Window) IsDirty() bool {
-	if !win.hasVersion {
+	if win.kind != WinFile || !win.writable {
 		return false
 	}
 	if buf := win.body.GetBuffer(); buf != nil {

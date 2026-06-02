@@ -402,7 +402,7 @@ func TestWindowFsErrorsCreatesWindow(t *testing.T) {
 	var errWin *Window
 	waitFor(t, e, s, func() bool {
 		for _, w := range col.windows {
-			if strings.HasSuffix(w.GetFilename(), "+Errors") && w.bodyTextView() != nil {
+			if w.kind == WinOut {
 				errWin = w
 				return true
 			}
@@ -429,7 +429,7 @@ func TestWindowFsErrorsAppends(t *testing.T) {
 	write("first\n")
 	waitFor(t, e, s, func() bool {
 		for _, w := range col.windows {
-			if strings.HasSuffix(w.GetFilename(), "+Errors") && w.bodyTextView() != nil {
+			if w.kind == WinOut {
 				return true
 			}
 		}
@@ -439,7 +439,7 @@ func TestWindowFsErrorsAppends(t *testing.T) {
 	write("second\n")
 	waitFor(t, e, s, func() bool {
 		for _, w := range col.windows {
-			if strings.HasSuffix(w.GetFilename(), "+Errors") && w.bodyTextView() != nil {
+			if w.kind == WinOut {
 				return strings.Contains(w.bodyTextView().buffer.GetText(), "second")
 			}
 		}
@@ -448,7 +448,7 @@ func TestWindowFsErrorsAppends(t *testing.T) {
 
 	var got string
 	for _, w := range col.windows {
-		if strings.HasSuffix(w.GetFilename(), "+Errors") && w.bodyTextView() != nil {
+		if w.kind == WinOut {
 			got = w.bodyTextView().buffer.GetText()
 		}
 	}
@@ -460,8 +460,8 @@ func TestWindowFsErrorsAppends(t *testing.T) {
 func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 	e, col, _, s := setupWindowTest(t)
 
-	// Create a terminal +Errors window for the same dir as /tmp/test.txt
-	termWin, err := col.AddTermWindow(" /tmp/+Errors Zerox Del ", "sh", "/tmp")
+	// Pre-create a terminal window — even if named like an error path, it must not be reused
+	_, err := col.AddTermWindow(" /tmp/+Errors Zerox Del ", "sh", "/tmp")
 	if err != nil {
 		t.Skipf("cannot create term window: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 	var errWin *Window
 	waitFor(t, e, s, func() bool {
 		for _, w := range col.windows {
-			if w != termWin && strings.HasSuffix(w.GetFilename(), "+Errors") && w.bodyTextView() != nil {
+			if w.kind == WinOut {
 				errWin = w
 				return true
 			}
@@ -487,7 +487,7 @@ func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 	})
 
 	if errWin == nil {
-		t.Error("expected a text +Errors window to be created, got none")
+		t.Error("expected a WinOut window to be created, got none")
 	}
 }
 

@@ -711,12 +711,12 @@ func TestExternalCommand(t *testing.T) {
 	}
 	e.HandleEvent(tcell.NewEventMouse(tx, ty, tcell.Button3, 0))
 
-	// 4. Wait for +Errors window and check content
+	// 4. Wait for error output window and check content
 	var errWin *Window
 	waitFor(t, e, s, func() bool {
 		for _, c := range e.columns {
 			for _, w := range c.windows {
-				if strings.HasSuffix(w.GetFilename(), "+Errors") {
+				if w.kind == WinOut {
 					errWin = w
 					return true
 				}
@@ -729,7 +729,7 @@ func TestExternalCommand(t *testing.T) {
 	t.Logf("Output from uname -a: %q", output)
 
 	// 5. Compare with Go's uname -a
-	expected, _ := runLocalCommand("uname -a", "/tmp/", "", 0)
+	expected, _ := runLocalCommand("uname -a", "/tmp/", "/tmp/", "", 0)
 	expected = strings.TrimSpace(expected)
 	if output != expected {
 		t.Errorf("Expected output %q, got %q", expected, output)

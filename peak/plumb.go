@@ -34,18 +34,6 @@ func (b *Buffer) GetWordAt(x, y int) string {
 	return string(line[start:end])
 }
 
-func (e *Editor) resolvePathWithContext(win *Window, path string) string {
-	dir := ""
-	if win != nil {
-		dir = win.GetDir()
-	} else if e.active != nil {
-		dir = e.active.GetDir()
-	} else {
-		dir = getwd()
-	}
-	return resolveWithContext(path, dir)
-}
-
 // Plumb attempts to handle a string (path or search).
 func (e *Editor) Plumb(win *Window, word string) bool {
 	word = strings.TrimSpace(word)
@@ -67,13 +55,14 @@ func (e *Editor) Plumb(win *Window, word string) bool {
 	path := m[1] + m[2]
 	line, _ := strconv.Atoi(m[3])
 	col, _ := strconv.Atoi(m[4])
+	base := ""
+	if win != nil {
+		base = win.GetDir()
+	} else if e.active != nil {
+		base = e.active.GetDir()
+	}
 	e.OpenLine(win, path, line-1, col, func() {
-		full := e.resolvePathWithContext(win, path)
-		if isPeakPath(full) {
-			e.showError(nil, win, "", full+": cannot open binary file from virtual filesystem")
-			return
-		}
-		OpenExternal(full)
+		OpenExternal(normalizePath(path, base))
 	}, func() {
 		e.Execute(nil, win, "Look "+word)
 	})

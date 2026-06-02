@@ -163,6 +163,24 @@ func (fs *CompositeFs) Stat(name string) (os.FileInfo, error) {
 
 func (fs *CompositeFs) Name() string { return "CompositeFs" }
 
+// ResolveLocalPath resolves a VFS path to a real OS path by following bind
+// mounts. Returns the resolved path and true when the path ultimately maps to
+// the local OsFs; returns ("", false) for remote or purely virtual paths.
+func (fs *CompositeFs) ResolveLocalPath(name string) (string, bool) {
+	_, mountedFs, relPath := fs.getMountAndFs(name)
+	switch mfs := mountedFs.(type) {
+	case *afero.OsFs:
+		return filepath.Clean(relPath), true
+	case *afero.BasePathFs:
+		realPath, err := mfs.RealPath(relPath)
+		if err != nil {
+			return "", false
+		}
+		return fs.ResolveLocalPath(realPath)
+	}
+	return "", false
+}
+
 // FindMount returns the mount path and mounted Fs for the deepest non-root
 // mount that contains name. Returns ("", nil) if none is found.
 func (fs *CompositeFs) FindMount(name string) (string, afero.Fs) {

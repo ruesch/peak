@@ -68,8 +68,8 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 	case "color":
 		return &simpleFileInfo{name: "color", mode: 0200}, nil
 	case "io":
-		if tv, ok := fs.win.body.(*TermView); ok {
-			if tv.externalPTY() != nil {
+		if fs.win.kind == WinTerm {
+			if fs.win.body.(*TermView).externalPTY() != nil {
 				return &simpleFileInfo{name: "io", mode: 0600}, nil
 			}
 		}
@@ -161,8 +161,8 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 	case "color":
 		return &winColorFile{win: fs.win}, nil
 	case "io":
-		if tv, ok := fs.win.body.(*TermView); ok {
-			if pty := tv.externalPTY(); pty != nil {
+		if fs.win.kind == WinTerm {
+			if pty := fs.win.body.(*TermView).externalPTY(); pty != nil {
 				return &winIoFile{pty: pty}, nil
 			}
 		}
@@ -233,8 +233,8 @@ func (f *winDirFile) Readdir(count int) ([]os.FileInfo, error) {
 		&simpleFileInfo{name: "errors", mode: 0200},
 		&simpleFileInfo{name: "color", mode: 0200},
 	}
-	if tv, ok := f.win.body.(*TermView); ok {
-		if tv.externalPTY() != nil {
+	if f.win.kind == WinTerm {
+		if f.win.body.(*TermView).externalPTY() != nil {
 			all = append(all, &simpleFileInfo{name: "io", mode: 0600})
 		}
 	}
@@ -310,8 +310,8 @@ func (f *winBodyFile) Close() error {
 	if f.writes == nil {
 		return nil
 	}
-	if tv, ok := f.win.body.(*TermView); ok {
-		tv.session.Write(f.writes)
+	if f.win.kind == WinTerm {
+		f.win.body.(*TermView).session.Write(f.writes)
 		return nil
 	}
 	text := string(f.writes)
@@ -391,7 +391,7 @@ func ctlSnap(win *Window) []byte {
 	if buf := win.body.GetBuffer(); buf != nil {
 		bodyLen = buf.Len()
 	}
-	if win.isDir {
+	if win.kind == WinDir {
 		isDir = 1
 	}
 	if win.IsDirty() {
@@ -502,7 +502,7 @@ func (f *winWrselFile) Close() error {
 	if f.writes == nil {
 		return nil
 	}
-	if _, ok := f.win.body.(*TermView); ok {
+	if f.win.kind == WinTerm {
 		return nil
 	}
 	runes := []rune(string(f.writes))

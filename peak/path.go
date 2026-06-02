@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"al.essio.dev/pkg/shellescape"
@@ -21,10 +20,6 @@ func getVFS() afero.Fs {
 	return afero.NewOsFs()
 }
 
-func isSpecial(path string) bool {
-	return strings.HasSuffix(path, "+Errors")
-}
-
 // toDir ensures a directory path ends with a trailing slash.
 func toDir(path string) string {
 	if path != "" && !strings.HasSuffix(path, "/") {
@@ -33,129 +28,61 @@ func toDir(path string) string {
 	return path
 }
 
-func isPeakPath(path string) bool {
-	return strings.HasPrefix(path, "/peak/") || path == "/peak"
-}
-
-// parseWinPath returns the window ID and optional file name for paths of the
-// form /peak/<id> or /peak/<id>/<file>. Returns ok=false for any other path.
-func parseWinPath(path string) (id int, file string, ok bool) {
-	rest, found := strings.CutPrefix(path, "/peak/")
-	if !found {
-		return 0, "", false
-	}
-	idStr, file, _ := strings.Cut(rest, "/")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		return 0, "", false
-	}
-	return id, file, true
-}
-
-// findWinByID returns the window with the given ID, or nil.
-func findWinByID(id int) *Window {
-	if appEditor == nil {
-		return nil
-	}
-	for _, col := range appEditor.columns {
-		for _, win := range col.windows {
-			if win.ID == id {
-				return win
-			}
-		}
-	}
-	return nil
-}
-
-func isDir(path string) bool {
-	if isSpecial(path) {
-		return false
-	}
-	// /peak/<id> is a directory; /peak/<id>/<file> is not.
-	// Resolved without touching the VFS to avoid editor.Call on the main goroutine.
-	if id, file, ok := parseWinPath(path); ok {
-		return file == "" && findWinByID(id) != nil
-	}
-	fi, err := getVFS().Stat(path)
-	return err == nil && fi.IsDir()
-}
-
-// getPathDir returns the directory associated with a path.
+// getPathDir returns the directory associated with a normalized path.
 func getPathDir(path string) string {
 	if path == "" {
 		return getwd()
 	}
-	if isSpecial(path) {
-		return toDir(filepath.Dir(path))
-	}
-	// Purely string-based. If it ends in /, it's a dir.
-	// Otherwise, we take the directory part of the path.
 	if strings.HasSuffix(path, "/") {
 		return path
 	}
-	return toDir(filepath.Dir(resolvePath(path)))
+	return toDir(filepath.Dir(path))
 }
 
-// resolvePath returns an absolute path, expanding ~ and handling relative segments.
-func resolvePath(path string) string {
+// normalizePath converts any user-input path to a canonical absolute form.
+// Expands ~, ./, and relative segments; relative paths are resolved against
+// base (cwd if base is empty). If the target exists in the VFS, a trailing
+// slash is added for directories and stripped for files. For paths that do
+// not yet exist, the trailing slash from the input is preserved.
+func normalizePath(path, base string) string {
 	if path == "" {
 		return path
 	}
-	if isPeakPath(path) {
-		return filepath.ToSlash(filepath.Clean(path))
+	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+		if base == "" {
+			base = getwd()
+		}
+		joined := filepath.Join(base, path)
+		if strings.HasSuffix(path, "/") && !strings.HasSuffix(joined, "/") {
+			joined += "/"
+		}
+		path = joined
 	}
+	trailingSlash := strings.HasSuffix(path, "/")
+	var abs string
 	if strings.HasPrefix(path, "~") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			if path == "~" {
-				return home
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" || path == "~/" {
+				abs = home
+			} else {
+				abs = filepath.Join(home, path[1:])
 			}
-			return filepath.Join(home, path[1:])
+		} else {
+			abs = path
 		}
+	} else {
+		abs, _ = filepath.Abs(path)
 	}
-	abs, _ := filepath.Abs(path)
+	if fi, err := getVFS().Stat(abs); err == nil {
+		if fi.IsDir() {
+			return abs + "/"
+		}
+		return abs
+	}
+	if trailingSlash {
+		return abs + "/"
+	}
 	return abs
-}
-
-// resolveWithContext resolves a path within a given context directory.
-func resolveWithContext(path, contextDir string) string {
-	if path == "" {
-		return ""
-	}
-	if isPeakPath(path) || filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
-		return resolvePath(path)
-	}
-	if contextDir == "" {
-		contextDir = getwd()
-	}
-	// Pure string joining and cleaning.
-	res := filepath.Join(contextDir, path)
-	if isPeakPath(res) {
-		return filepath.ToSlash(filepath.Clean(res))
-	}
-	return res
-}
-
-// formatPath formats a full path relative to a context path.
-func formatPath(fullPath, contextPath string) string {
-	if isPeakPath(fullPath) || contextPath == "" {
-		return fullPath
-	}
-
-	if strings.HasPrefix(contextPath, "~") {
-		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(fullPath, home) {
-			return "~" + fullPath[len(home):]
-		}
-	} else if !filepath.IsAbs(contextPath) {
-		cwd, _ := os.Getwd()
-		if rel, err := filepath.Rel(cwd, fullPath); err == nil {
-			if !strings.HasPrefix(rel, ".") && !strings.HasPrefix(rel, "/") {
-				rel = "./" + rel
-			}
-			return rel
-		}
-	}
-	return fullPath
 }
 
 // getwd returns the current working directory with a trailing slash.
@@ -171,9 +98,6 @@ func readFile(path string) ([]byte, error) {
 
 // writeFile writes data to a file.
 func writeFile(path string, data []byte) error {
-	if isSpecial(path) {
-		return os.ErrInvalid
-	}
 	return afero.WriteFile(getVFS(), path, data, 0644)
 }
 
@@ -280,28 +204,25 @@ func join(elem ...string) string {
 
 // runCommand runs a command with sh -c and returns the output and error.
 func runCommand(cmd, path, input string, winid int) (string, error) {
-	// Check for remote execution before isPeakPath, so mounts under /peak/
-	// (e.g. /peak/ssh/...) can delegate to their filesystem's "run" file.
 	if appEditor != nil && appEditor.ninep != nil {
-		if mountPath, mountFs := appEditor.ninep.FindMount(path); mountPath != "" {
-			relPath, _ := filepath.Rel(mountPath, getPathDir(path))
-			relPath += "/"
-			runF, err := mountFs.OpenFile("run", os.O_RDWR, 0)
-			if err == nil {
-				out, rerr := remoteRun(runF, relPath, cmd)
+		ninep := appEditor.ninep
+		dir := getPathDir(path)
+		if mountPath, mountFs := ninep.FindMount(dir); mountPath != "" {
+			relPath, _ := filepath.Rel(mountPath, dir)
+			if runF, err := mountFs.OpenFile("run", os.O_RDWR, 0); err == nil {
+				out, rerr := remoteRun(runF, toDir(relPath), cmd)
 				runF.Close()
 				return out, rerr
 			}
 		}
-	}
-	if isPeakPath(path) {
-		if appEditor != nil && appEditor.ninep != nil {
-			return appEditor.ninep.RunInternal(path, cmd, input, winid)
+		if localDir, ok := ninep.ResolveLocalPath(dir); ok {
+			return runLocalCommand(cmd, path, localDir, input, winid)
 		}
-		return "", fmt.Errorf("%s: virtual path is not initialized to run command", path)
+		return "", fmt.Errorf("%s: don't know how to run command", path)
 	}
-	return runLocalCommand(cmd, path, input, winid)
+	return runLocalCommand(cmd, path, getPathDir(path), input, winid)
 }
+
 
 func remoteRun(f afero.File, relPath, cmd string) (string, error) {
 	if _, err := f.WriteAt([]byte(relPath+"\n"+cmd+"\n"), 0); err != nil {
@@ -324,8 +245,7 @@ func remoteRun(f afero.File, relPath, cmd string) (string, error) {
 }
 
 // runLocalCommand executes a command on the local OS.
-func runLocalCommand(cmd, path, input string, winid int) (string, error) {
-	dir := getPathDir(path)
+func runLocalCommand(cmd, path, dir, input string, winid int) (string, error) {
 	wrappedCmd := fmt.Sprintf("env samfile=%s winid=%d sh -c %s",
 		shellescape.Quote(path),
 		winid,

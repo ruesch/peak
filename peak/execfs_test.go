@@ -455,7 +455,7 @@ func TestBindFileReadsCurrentBinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
-	want := src + " " + dst
+	want := src + "/ " + dst + "/"
 	if !strings.Contains(string(data), want) {
 		t.Errorf("bind listing missing %q, got:\n%s", want, data)
 	}
@@ -485,7 +485,7 @@ func TestMountAndBindListsSeparate(t *testing.T) {
 	if strings.Contains(string(mountData), bindDst) {
 		t.Errorf("/mount listing contains bind entry %q", bindDst)
 	}
-	if !strings.Contains(string(bindData), bindSrc+" "+bindDst) {
+	if !strings.Contains(string(bindData), bindSrc+"/ "+bindDst+"/") {
 		t.Errorf("/bind listing missing %q %q, got:\n%s", bindSrc, bindDst, bindData)
 	}
 }
