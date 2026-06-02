@@ -551,7 +551,7 @@ func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath,
 	}
 
 	sess := session.NewRemote(ioRead, ioWrite, ctlF)
-	title := join(dir, "+Errors")
+	title := join(dir, "-"+filepath.Base(mountPath))
 
 	reply := make(chan error, 1)
 	e.screen.PostEvent(tcell.NewEventInterrupt(func() {

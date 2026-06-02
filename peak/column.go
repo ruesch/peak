@@ -1,6 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/aleksana/peak/internal/session"
 	"github.com/gdamore/tcell/v2"
 )
@@ -107,7 +111,15 @@ func (c *Column) AddWindow(tagText, bodyText string) *Window {
 
 func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 	if tagText == "" {
-		tagText = " " + join(dir, "+Errors") + " Zerox Del "
+		var name string
+		if cmd == "" {
+			if name, _ = os.Hostname(); name == "" {
+				name = "term"
+			}
+		} else {
+			name = filepath.Base(strings.Fields(cmd)[0])
+		}
+		tagText = " " + join(dir, "-"+name) + " Zerox Del "
 	}
 
 	newWin, err := NewTermWindow(tagText, c, c.editor, c.x, c.y, c.w, 0, cmd, dir, c.onExec)
