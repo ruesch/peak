@@ -173,8 +173,6 @@ func (e *Editor) getArg(win *Window, cmd string) string {
 	return ""
 }
 
-// resolvePathWithContext is now in plumb.go
-
 func (e *Editor) Open(win *Window, path string) {
 	e.OpenLine(win, path, -1, 0, nil, nil)
 }
@@ -472,36 +470,29 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 		return
 	}
 
-	// If the window's path is under an external mount, delegate session
-	// creation to that mount.  Do not fall through to a local terminal
-	// because the working directory belongs to the remote filesystem.
 	if e.ninep != nil && win != nil {
 		winPath := win.GetFilename()
 		if mountPath, mountFs := e.ninep.FindMount(winPath); mountPath != "" {
 			dir := getPathDir(winPath)
 			relPath, _ := filepath.Rel(mountPath, dir)
-			relPath += "/"
-			newF, err := mountFs.OpenFile("new", os.O_RDWR, 0)
-			if err != nil {
-				e.showError(targetCol, win, "", winPath+": virtual path cannot open pty window")
+			if newF, err := mountFs.OpenFile("new", os.O_RDWR, 0); err == nil {
+				go func() {
+					defer newF.Close()
+					if _, werr := newF.WriteAt([]byte(relPath+"/"), 0); werr != nil {
+						e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+							e.showError(targetCol, win, "", "remote session: "+werr.Error())
+						}))
+						return
+					}
+					buf := make([]byte, 256)
+					n, _ := newF.ReadAt(buf, 0)
+					sessRel := strings.TrimSpace(string(buf[:n]))
+					if sessRel != "" {
+						e.openRemoteTermWindow(targetCol, win, mountPath, sessRel, dir)
+					}
+				}()
 				return
 			}
-			go func() {
-				defer newF.Close()
-				if _, werr := newF.WriteAt([]byte(relPath), 0); werr != nil {
-					e.screen.PostEvent(tcell.NewEventInterrupt(func() {
-						e.showError(targetCol, win, "", "remote session: "+werr.Error())
-					}))
-					return
-				}
-				buf := make([]byte, 256)
-				n, _ := newF.ReadAt(buf, 0)
-				sessRel := strings.TrimSpace(string(buf[:n]))
-				if sessRel != "" {
-					e.openRemoteTermWindow(targetCol, win, mountPath, sessRel, dir)
-				}
-			}()
-			return
 		}
 	}
 
@@ -510,6 +501,14 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 		dir = win.GetDir()
 	} else {
 		dir = getwd()
+	}
+	if e.ninep != nil {
+		if localDir, ok := e.ninep.ResolveLocalPath(dir); ok {
+			dir = localDir
+		} else {
+			e.showError(targetCol, win, "", dir+": don't know how to open terminal window")
+			return
+		}
 	}
 	newWin, err := targetCol.AddTermWindow("", arg, dir)
 	if err != nil {

@@ -69,10 +69,6 @@ func (e *Editor) Plumb(win *Window, word string) bool {
 	col, _ := strconv.Atoi(m[4])
 	e.OpenLine(win, path, line-1, col, func() {
 		full := e.resolvePathWithContext(win, path)
-		if isPeakPath(full) {
-			e.showError(nil, win, "", full+": cannot open binary file from virtual filesystem")
-			return
-		}
 		OpenExternal(full)
 	}, func() {
 		e.Execute(nil, win, "Look "+word)

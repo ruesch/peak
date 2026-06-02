@@ -28,11 +28,6 @@ func toDir(path string) string {
 	return path
 }
 
-func isPeakPath(path string) bool {
-	return strings.HasPrefix(path, "/peak/") || path == "/peak"
-}
-
-
 // getPathDir returns the directory associated with a path.
 func getPathDir(path string) string {
 	if path == "" {
@@ -48,9 +43,6 @@ func getPathDir(path string) string {
 func resolvePath(path string) string {
 	if path == "" {
 		return path
-	}
-	if isPeakPath(path) {
-		return filepath.ToSlash(filepath.Clean(path))
 	}
 	if strings.HasPrefix(path, "~") {
 		home, err := os.UserHomeDir()
@@ -70,23 +62,18 @@ func resolveWithContext(path, contextDir string) string {
 	if path == "" {
 		return ""
 	}
-	if isPeakPath(path) || filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
 		return resolvePath(path)
 	}
 	if contextDir == "" {
 		contextDir = getwd()
 	}
-	// Pure string joining and cleaning.
-	res := filepath.Join(contextDir, path)
-	if isPeakPath(res) {
-		return filepath.ToSlash(filepath.Clean(res))
-	}
-	return res
+	return filepath.Join(contextDir, path)
 }
 
 // formatPath formats a full path relative to a context path.
 func formatPath(fullPath, contextPath string) string {
-	if isPeakPath(fullPath) || contextPath == "" {
+	if contextPath == "" {
 		return fullPath
 	}
 
@@ -225,28 +212,25 @@ func join(elem ...string) string {
 
 // runCommand runs a command with sh -c and returns the output and error.
 func runCommand(cmd, path, input string, winid int) (string, error) {
-	// Check for remote execution before isPeakPath, so mounts under /peak/
-	// (e.g. /peak/ssh/...) can delegate to their filesystem's "run" file.
 	if appEditor != nil && appEditor.ninep != nil {
-		if mountPath, mountFs := appEditor.ninep.FindMount(path); mountPath != "" {
-			relPath, _ := filepath.Rel(mountPath, getPathDir(path))
-			relPath += "/"
-			runF, err := mountFs.OpenFile("run", os.O_RDWR, 0)
-			if err == nil {
-				out, rerr := remoteRun(runF, relPath, cmd)
+		ninep := appEditor.ninep
+		dir := getPathDir(path)
+		if mountPath, mountFs := ninep.FindMount(dir); mountPath != "" {
+			relPath, _ := filepath.Rel(mountPath, dir)
+			if runF, err := mountFs.OpenFile("run", os.O_RDWR, 0); err == nil {
+				out, rerr := remoteRun(runF, relPath+"/", cmd)
 				runF.Close()
 				return out, rerr
 			}
 		}
-	}
-	if isPeakPath(path) {
-		if appEditor != nil && appEditor.ninep != nil {
-			return appEditor.ninep.RunInternal(path, cmd, input, winid)
+		if localDir, ok := ninep.ResolveLocalPath(dir); ok {
+			return runLocalCommand(cmd, path, localDir, input, winid)
 		}
-		return "", fmt.Errorf("%s: virtual path is not initialized to run command", path)
+		return "", fmt.Errorf("%s: don't know how to run command", path)
 	}
-	return runLocalCommand(cmd, path, input, winid)
+	return runLocalCommand(cmd, path, getPathDir(path), input, winid)
 }
+
 
 func remoteRun(f afero.File, relPath, cmd string) (string, error) {
 	if _, err := f.WriteAt([]byte(relPath+"\n"+cmd+"\n"), 0); err != nil {
@@ -269,8 +253,7 @@ func remoteRun(f afero.File, relPath, cmd string) (string, error) {
 }
 
 // runLocalCommand executes a command on the local OS.
-func runLocalCommand(cmd, path, input string, winid int) (string, error) {
-	dir := getPathDir(path)
+func runLocalCommand(cmd, path, dir, input string, winid int) (string, error) {
 	wrappedCmd := fmt.Sprintf("env samfile=%s winid=%d sh -c %s",
 		shellescape.Quote(path),
 		winid,

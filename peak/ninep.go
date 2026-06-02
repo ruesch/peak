@@ -186,8 +186,10 @@ func formatEntries(entries []mountEntry) string {
 	return sb.String()
 }
 
-func (p *NineP) RunInternal(path, cmd, input string, winid int) (string, error) {
-	return "", fmt.Errorf("%s: virtual path cannot execute external command", path)
+// ResolveLocalPath resolves path to a real OS path through any bind mounts.
+// Returns ("", false) for remote or purely virtual paths.
+func (p *NineP) ResolveLocalPath(path string) (string, bool) {
+	return p.vfs.ResolveLocalPath(path)
 }
 
 // FindMount returns the mount path and mounted Fs for the deepest non-root

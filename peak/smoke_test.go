@@ -729,7 +729,7 @@ func TestExternalCommand(t *testing.T) {
 	t.Logf("Output from uname -a: %q", output)
 
 	// 5. Compare with Go's uname -a
-	expected, _ := runLocalCommand("uname -a", "/tmp/", "", 0)
+	expected, _ := runLocalCommand("uname -a", "/tmp/", "/tmp/", "", 0)
 	expected = strings.TrimSpace(expected)
 	if output != expected {
 		t.Errorf("Expected output %q, got %q", expected, output)
