@@ -108,7 +108,7 @@ func (e *Editor) cmdMount(win *Window, cmd string) {
 		e.showError(nil, win, "", "Mount failed: "+err.Error())
 		return
 	}
-	e.ninep.record(&e.ninep.mounts, resolvedSrc, resolvePath(path))
+	e.ninep.record(&e.ninep.mounts, resolvedSrc, normalizePath(path, ""))
 }
 
 func (e *Editor) cmdBind(win *Window, cmd string) {
@@ -178,7 +178,13 @@ func (e *Editor) Open(win *Window, path string) {
 }
 
 func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallback, fallback func()) {
-	full := e.resolvePathWithContext(win, path)
+	base := ""
+	if win != nil {
+		base = win.GetDir()
+	} else if e.active != nil {
+		base = e.active.GetDir()
+	}
+	full := normalizePath(path, base)
 
 	// /peak/new creates a fresh text window, same semantics as walking the 9P /new path.
 	if full == "/peak/new" {
@@ -194,7 +200,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 	// 1. Try to find existing window
 	for _, c := range e.columns {
 		for _, w := range c.windows {
-			if e.resolvePathWithContext(nil, w.GetFilename()) == full {
+			if w.GetFilename() == full {
 				e.ActivateWindow(w)
 				if line >= 0 {
 					if tv := w.bodyTextView(); tv != nil {
@@ -229,11 +235,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 }
 
 func (e *Editor) createWindow(target *Column, full string, content string, isDir bool, writable bool, line, col int) *Window {
-	if isDir {
-		full = toDir(full)
-	}
-	tagPath := e.formatPathForTag(nil, full)
-	newWin := target.AddWindow(" "+tagPath+" Get Put Undo Redo Snarf Zerox Del ", content)
+	newWin := target.AddWindow(" "+full+" Get Put Undo Redo Snarf Zerox Del ", content)
 	e.ActivateWindow(newWin)
 	if isDir {
 		newWin.kind = WinDir
@@ -251,12 +253,6 @@ func (e *Editor) createWindow(target *Column, full string, content string, isDir
 	return newWin
 }
 
-func (e *Editor) formatPathForTag(contextWin *Window, fullPath string) string {
-	if contextWin == nil {
-		return formatPath(fullPath, "")
-	}
-	return formatPath(fullPath, contextWin.GetFilename())
-}
 
 func (e *Editor) getTargetWindow(win *Window) *Window {
 	if win != nil {
@@ -306,14 +302,11 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 	if arg == "" {
 		arg = target.GetFilename()
 	}
-	path := e.resolvePathWithContext(target, arg)
+	path := normalizePath(arg, target.GetDir())
 	go func() {
 		content, isDir, writable, err := readFileOrDir(path)
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			if err == nil {
-				if isDir {
-					path = toDir(path)
-				}
 				target.SetName(path)
 				if tv := target.bodyTextView(); tv != nil {
 					tv.buffer.SetText(content)
@@ -343,7 +336,7 @@ func (e *Editor) cmdPut(win *Window, cmd string) {
 	if arg == "" {
 		arg = target.GetFilename()
 	}
-	path := e.resolvePathWithContext(target, arg)
+	path := normalizePath(arg, target.GetDir())
 	if path != "" {
 		tv := target.bodyTextView()
 		if tv == nil {
@@ -478,7 +471,7 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 			if newF, err := mountFs.OpenFile("new", os.O_RDWR, 0); err == nil {
 				go func() {
 					defer newF.Close()
-					if _, werr := newF.WriteAt([]byte(relPath+"/"), 0); werr != nil {
+					if _, werr := newF.WriteAt([]byte(toDir(relPath)), 0); werr != nil {
 						e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 							e.showError(targetCol, win, "", "remote session: "+werr.Error())
 						}))

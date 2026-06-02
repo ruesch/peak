@@ -106,18 +106,18 @@ func (p *NineP) BroadcastPut(win *Window) {
 func (p *NineP) Mount(socket, path string) (string, error) {
 	// Try virtual socket first: explicit positive check against the namespace.
 	if conn, err := p.nsFs.openSocket(context.Background(), socket); err == nil {
-		mountPath := resolvePath(path)
+		mountPath := normalizePath(path, "")
 		clientFs, err := vfs.NewNinePClientFsFromConn(conn)
 		if err != nil {
 			conn.Close()
 			return "", err
 		}
 		p.vfs.Mount(mountPath, clientFs)
-		return p.nsBase + "/" + strings.TrimPrefix(socket, "/"), nil
+		return filepath.Join(p.nsBase, socket), nil
 	}
 	// Not in the namespace — must be a real Unix socket.
-	socket = resolvePath(socket)
-	path = resolvePath(path)
+	socket = normalizePath(socket, "")
+	path = normalizePath(path, "")
 	clientFs, err := vfs.NewNinePClientFs("unix", socket)
 	if err != nil {
 		return "", err
@@ -127,7 +127,7 @@ func (p *NineP) Mount(socket, path string) (string, error) {
 }
 
 func (p *NineP) Umount(path string) {
-	path = resolvePath(path)
+	path = normalizePath(path, "")
 	p.vfs.Umount(path)
 	p.mountMu.Lock()
 	p.mounts = removeByDst(p.mounts, path)
@@ -139,8 +139,8 @@ func (p *NineP) Umount(path string) {
 // path reachable through the composite VFS (internal or external). Callers
 // that want the bind to appear in /bind should record it via record().
 func (p *NineP) Bind(src, dest string) error {
-	src = resolvePath(src)
-	dest = resolvePath(dest)
+	src = normalizePath(src, "")
+	dest = normalizePath(dest, "")
 	p.vfs.Mount(dest, afero.NewBasePathFs(p.vfs, src))
 	return nil
 }

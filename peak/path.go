@@ -28,7 +28,7 @@ func toDir(path string) string {
 	return path
 }
 
-// getPathDir returns the directory associated with a path.
+// getPathDir returns the directory associated with a normalized path.
 func getPathDir(path string) string {
 	if path == "" {
 		return getwd()
@@ -36,61 +36,53 @@ func getPathDir(path string) string {
 	if strings.HasSuffix(path, "/") {
 		return path
 	}
-	return toDir(filepath.Dir(resolvePath(path)))
+	return toDir(filepath.Dir(path))
 }
 
-// resolvePath returns an absolute path, expanding ~ and handling relative segments.
-func resolvePath(path string) string {
+// normalizePath converts any user-input path to a canonical absolute form.
+// Expands ~, ./, and relative segments; relative paths are resolved against
+// base (cwd if base is empty). If the target exists in the VFS, a trailing
+// slash is added for directories and stripped for files. For paths that do
+// not yet exist, the trailing slash from the input is preserved.
+func normalizePath(path, base string) string {
 	if path == "" {
 		return path
 	}
+	if !filepath.IsAbs(path) && !strings.HasPrefix(path, "~") {
+		if base == "" {
+			base = getwd()
+		}
+		joined := filepath.Join(base, path)
+		if strings.HasSuffix(path, "/") && !strings.HasSuffix(joined, "/") {
+			joined += "/"
+		}
+		path = joined
+	}
+	trailingSlash := strings.HasSuffix(path, "/")
+	var abs string
 	if strings.HasPrefix(path, "~") {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			if path == "~" {
-				return home
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" || path == "~/" {
+				abs = home
+			} else {
+				abs = filepath.Join(home, path[1:])
 			}
-			return filepath.Join(home, path[1:])
+		} else {
+			abs = path
 		}
+	} else {
+		abs, _ = filepath.Abs(path)
 	}
-	abs, _ := filepath.Abs(path)
+	if fi, err := getVFS().Stat(abs); err == nil {
+		if fi.IsDir() {
+			return abs + "/"
+		}
+		return abs
+	}
+	if trailingSlash {
+		return abs + "/"
+	}
 	return abs
-}
-
-// resolveWithContext resolves a path within a given context directory.
-func resolveWithContext(path, contextDir string) string {
-	if path == "" {
-		return ""
-	}
-	if filepath.IsAbs(path) || strings.HasPrefix(path, "~") {
-		return resolvePath(path)
-	}
-	if contextDir == "" {
-		contextDir = getwd()
-	}
-	return filepath.Join(contextDir, path)
-}
-
-// formatPath formats a full path relative to a context path.
-func formatPath(fullPath, contextPath string) string {
-	if contextPath == "" {
-		return fullPath
-	}
-
-	if strings.HasPrefix(contextPath, "~") {
-		if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(fullPath, home) {
-			return "~" + fullPath[len(home):]
-		}
-	} else if !filepath.IsAbs(contextPath) {
-		cwd, _ := os.Getwd()
-		if rel, err := filepath.Rel(cwd, fullPath); err == nil {
-			if !strings.HasPrefix(rel, ".") && !strings.HasPrefix(rel, "/") {
-				rel = "./" + rel
-			}
-			return rel
-		}
-	}
-	return fullPath
 }
 
 // getwd returns the current working directory with a trailing slash.
@@ -218,7 +210,7 @@ func runCommand(cmd, path, input string, winid int) (string, error) {
 		if mountPath, mountFs := ninep.FindMount(dir); mountPath != "" {
 			relPath, _ := filepath.Rel(mountPath, dir)
 			if runF, err := mountFs.OpenFile("run", os.O_RDWR, 0); err == nil {
-				out, rerr := remoteRun(runF, relPath+"/", cmd)
+				out, rerr := remoteRun(runF, toDir(relPath), cmd)
 				runF.Close()
 				return out, rerr
 			}

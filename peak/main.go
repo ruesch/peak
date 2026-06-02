@@ -151,7 +151,7 @@ func (e *Editor) Init(numCols int, args []string) {
 
 	if len(args) > 0 {
 		for _, arg := range args {
-			full := e.resolvePathWithContext(nil, arg)
+			full := normalizePath(arg, "")
 			content, isDir, writable, err := readFileOrDir(full)
 			if err == nil {
 				e.createWindow(e.columns[0], full, content, isDir, writable, -1, 0)
