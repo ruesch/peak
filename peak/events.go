@@ -319,7 +319,7 @@ func (f *winDataFile) Close() error {
 	if f.writes == nil {
 		return nil
 	}
-	if _, ok := f.win.body.(*TermView); ok {
+	if f.win.kind == WinTerm {
 		return nil
 	}
 	runes := []rune(string(f.writes))

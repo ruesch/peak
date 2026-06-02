@@ -807,7 +807,7 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 					if buf == nil {
 						continue
 					}
-					if _, ok := win.body.(*TermView); ok {
+					if win.kind == WinTerm {
 						continue
 					}
 					subCtx := &Context{Editor: ctx.Editor, Column: col, Window: win, Buffer: buf, Out: ctx.Out, Log: subLog}
@@ -837,9 +837,12 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 	case 'w':
 		filename := strings.TrimSpace(cmd.text)
 		if filename == "" {
+			if ctx.Window == nil || ctx.Window.kind != WinFile {
+				return addr, true
+			}
 			filename = ctx.Window.GetFilename()
 		}
-		if filename != "" && !isDir(filename) {
+		if filename != "" {
 			textToWrite := string(runes[addr.q0:addr.q1])
 			err := writeFile(filename, []byte(textToWrite))
 			if err != nil && ctx.Out != nil {

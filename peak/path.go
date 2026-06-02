@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"al.essio.dev/pkg/shellescape"
@@ -19,10 +18,6 @@ func getVFS() afero.Fs {
 		return appEditor.ninep.vfs
 	}
 	return afero.NewOsFs()
-}
-
-func isSpecial(path string) bool {
-	return strings.HasSuffix(path, "+Errors")
 }
 
 // toDir ensures a directory path ends with a trailing slash.
@@ -37,59 +32,12 @@ func isPeakPath(path string) bool {
 	return strings.HasPrefix(path, "/peak/") || path == "/peak"
 }
 
-// parseWinPath returns the window ID and optional file name for paths of the
-// form /peak/<id> or /peak/<id>/<file>. Returns ok=false for any other path.
-func parseWinPath(path string) (id int, file string, ok bool) {
-	rest, found := strings.CutPrefix(path, "/peak/")
-	if !found {
-		return 0, "", false
-	}
-	idStr, file, _ := strings.Cut(rest, "/")
-	id, err := strconv.Atoi(idStr)
-	if err != nil {
-		return 0, "", false
-	}
-	return id, file, true
-}
-
-// findWinByID returns the window with the given ID, or nil.
-func findWinByID(id int) *Window {
-	if appEditor == nil {
-		return nil
-	}
-	for _, col := range appEditor.columns {
-		for _, win := range col.windows {
-			if win.ID == id {
-				return win
-			}
-		}
-	}
-	return nil
-}
-
-func isDir(path string) bool {
-	if isSpecial(path) {
-		return false
-	}
-	// /peak/<id> is a directory; /peak/<id>/<file> is not.
-	// Resolved without touching the VFS to avoid editor.Call on the main goroutine.
-	if id, file, ok := parseWinPath(path); ok {
-		return file == "" && findWinByID(id) != nil
-	}
-	fi, err := getVFS().Stat(path)
-	return err == nil && fi.IsDir()
-}
 
 // getPathDir returns the directory associated with a path.
 func getPathDir(path string) string {
 	if path == "" {
 		return getwd()
 	}
-	if isSpecial(path) {
-		return toDir(filepath.Dir(path))
-	}
-	// Purely string-based. If it ends in /, it's a dir.
-	// Otherwise, we take the directory part of the path.
 	if strings.HasSuffix(path, "/") {
 		return path
 	}
@@ -171,9 +119,6 @@ func readFile(path string) ([]byte, error) {
 
 // writeFile writes data to a file.
 func writeFile(path string, data []byte) error {
-	if isSpecial(path) {
-		return os.ErrInvalid
-	}
 	return afero.WriteFile(getVFS(), path, data, 0644)
 }
 
