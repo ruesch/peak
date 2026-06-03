@@ -324,11 +324,11 @@ func (tv *TermView) Search(word string) int {
 	return -1
 }
 
-func (tv *TermView) ShowLineAt(lineNum int, vrow int) {
+func (tv *TermView) ShowLineAt(lineNum int) {
 	if lineNum >= tv.scroll.Pos && lineNum < tv.scroll.Pos+tv.h {
 		return
 	}
-	tv.scroll.Pos = lineNum - vrow
+	tv.scroll.Pos = lineNum - tv.h/4
 	_, total, visible := tv.GetScroll()
 	tv.scroll.Clamp(total, visible)
 }

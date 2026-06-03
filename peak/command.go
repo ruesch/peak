@@ -245,11 +245,13 @@ func (e *Editor) createWindow(target *Column, full string, content string, isDir
 	}
 	if tv := newWin.bodyTextView(); tv != nil {
 		newWin.savedVersion = tv.buffer.version
-		if line >= 0 {
+	}
+	target.Resize(target.x, target.y, target.w, target.h)
+	if line >= 0 {
+		if tv := newWin.bodyTextView(); tv != nil {
 			tv.GotoLineCol(line, col)
 		}
 	}
-	target.Resize(target.x, target.y, target.w, target.h)
 	return newWin
 }
 
@@ -681,7 +683,7 @@ func (e *Editor) cmdLook(win *Window, cmd string) {
 	if target.body != nil {
 		foundLine := target.body.Search(arg)
 		if foundLine != -1 {
-			e.alignWindow(target, foundLine)
+			target.body.ShowLineAt(foundLine)
 		}
 	}
 }
@@ -732,7 +734,7 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	buf.SetSelection(start, end)
 	if res.Cmd.cmdc == '\n' {
 		buf.cursor = start
-		e.alignWindow(target, start.y)
+		target.body.ShowLineAt(start.y)
 		if target.kind == WinTerm {
 			target.body.(*TermView).scroll.AutoScroll = false
 		}
@@ -750,19 +752,6 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	}
 }
 
-func (e *Editor) alignWindow(target *Window, line int) {
-	if target.body == nil {
-		return
-	}
-	_, ty, _, th := target.body.GetPos()
-	vrow := e.lastClickY - ty
-	if vrow < 0 {
-		vrow = 0
-	} else if vrow >= th {
-		vrow = th / 2
-	}
-	target.body.ShowLineAt(line, vrow)
-}
 
 func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *Window {
 	if dir == "" {

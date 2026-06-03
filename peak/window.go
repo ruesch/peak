@@ -42,7 +42,7 @@ type View interface {
 	Scroll(n int)
 	GetScroll() (scroll, total, visible int)
 	Search(word string) int
-	ShowLineAt(lineNum, vrow int)
+	ShowLineAt(lineNum int)
 	IsRaw() bool
 }
 
@@ -160,19 +160,9 @@ func (tv *TextView) Scroll(n int) {
 func (tv *TextView) GotoLineCol(lineNum, colNum int) {
 	lineNum = max(0, min(lineNum, len(tv.buffer.lines)-1))
 	colNum = max(0, min(colNum, len(tv.buffer.lines[lineNum])))
-
 	tv.buffer.cursor = Cursor{colNum, lineNum}
 	tv.buffer.ClearSelection()
-	tv.UpdateLayout()
-	// Find the visual line for this buffer line and scroll to it
-	for i, vl := range tv.layout {
-		if vl.BufferLine == lineNum {
-			tv.scroll.Pos = i
-			break
-		}
-	}
-	tv.scroll.AutoScroll = true
-	tv.SyncScroll()
+	tv.ShowLineAt(lineNum)
 }
 
 // bufferToVisual translates a buffer position to visual coordinates (vx, vrow).
@@ -543,7 +533,7 @@ func (tv *TextView) Search(word string) int {
 	return -1
 }
 
-func (tv *TextView) ShowLineAt(lineNum int, vrow int) {
+func (tv *TextView) ShowLineAt(lineNum int) {
 	tv.UpdateLayout()
 	vidx := -1
 	for i, vl := range tv.layout {
@@ -555,7 +545,7 @@ func (tv *TextView) ShowLineAt(lineNum int, vrow int) {
 	if vidx == -1 || (vidx >= tv.scroll.Pos && vidx < tv.scroll.Pos+tv.h) {
 		return
 	}
-	tv.scroll.Pos = vidx - vrow
+	tv.scroll.Pos = vidx - tv.h/4
 	tv.scroll.Clamp(len(tv.layout), tv.h)
 	tv.scroll.AutoScroll = true
 	tv.SyncScroll()
