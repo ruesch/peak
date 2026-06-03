@@ -536,9 +536,7 @@ func (e *Editor) resize() {
 
 	x := 0
 	for i, col := range e.columns {
-		if col.explicitWidth > 0 {
-			col.explicitWidth = sizes[i]
-		}
+		col.explicitWidth = sizes[i]
 		col.Resize(x, 1, sizes[i], e.h-1)
 		x += sizes[i]
 	}

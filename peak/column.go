@@ -159,9 +159,7 @@ func (c *Column) Resize(x, y, w, h int) {
 
 	yOffset := y + 1
 	for i, win := range c.windows {
-		if win.explicitHeight > 0 {
-			win.explicitHeight = sizes[i]
-		}
+		win.explicitHeight = sizes[i]
 		win.Resize(x, yOffset, w, sizes[i])
 		yOffset += sizes[i]
 	}
