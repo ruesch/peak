@@ -730,13 +730,14 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	start := buf.RuneOffsetToCursor(newDot.q0)
 	end := buf.RuneOffsetToCursor(newDot.q1)
 	buf.SetSelection(start, end)
-	buf.cursor = end
-
 	if res.Cmd.cmdc == '\n' {
-		e.alignWindow(target, end.y)
+		buf.cursor = start
+		e.alignWindow(target, start.y)
 		if target.kind == WinTerm {
 			target.body.(*TermView).scroll.AutoScroll = false
 		}
+	} else {
+		buf.cursor = end
 	}
 
 	if target.kind == WinTerm {
