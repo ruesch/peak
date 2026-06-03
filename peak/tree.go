@@ -74,7 +74,7 @@ func distribute(children []DrawNode, total int, lastTotal int) []int {
 	}
 
 	if numAuto > 0 && totalExplicit >= total {
-		targetAuto := (total * numAuto) / (len(children) + 1)
+		targetAuto := (total * numAuto) / len(children)
 		if targetAuto < 5*numAuto {
 			targetAuto = 5 * numAuto
 		}
