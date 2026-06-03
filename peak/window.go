@@ -159,9 +159,15 @@ func (tv *TextView) Scroll(n int) {
 
 func (tv *TextView) GotoLineCol(lineNum, colNum int) {
 	lineNum = max(0, min(lineNum, len(tv.buffer.lines)-1))
-	colNum = max(0, min(colNum, len(tv.buffer.lines[lineNum])))
-	tv.buffer.cursor = Cursor{colNum, lineNum}
-	tv.buffer.ClearSelection()
+	if colNum < 0 {
+		end := Cursor{len(tv.buffer.lines[lineNum]), lineNum}
+		tv.buffer.SetSelection(Cursor{0, lineNum}, end)
+		tv.buffer.cursor = end
+	} else {
+		colNum = max(0, min(colNum, len(tv.buffer.lines[lineNum])))
+		tv.buffer.cursor = Cursor{colNum, lineNum}
+		tv.buffer.ClearSelection()
+	}
 	tv.ShowLineAt(lineNum)
 }
 

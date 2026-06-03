@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	plumbRx  = regexp.MustCompile(`^([^\x00]*?)(?:([^:]):(\d+):(\d+))?$`)
+	plumbRx  = regexp.MustCompile(`^([^\x00]*?)(?:([^:]):(\d+)(?::(\d+))?)?$`)
 	httpRx   = regexp.MustCompile(`https?://[a-zA-Z0-9][-a-zA-Z0-9.]*(?::\d+)?(?:/[^\s"'>]*)?`)
 	mailtoRx = regexp.MustCompile(`mailto:[^\s"'>]+@[^\s"'>]+(\?[^\s"'>]*)?`)
 	magnetRx = regexp.MustCompile(`magnet:\?xt=urn:[a-z0-9]+:[a-z0-9]{32,128}[^"'\s<>]*`)
@@ -54,7 +54,10 @@ func (e *Editor) Plumb(win *Window, word string) bool {
 	}
 	path := m[1] + m[2]
 	line, _ := strconv.Atoi(m[3])
-	col, _ := strconv.Atoi(m[4])
+	col := -1
+	if m[4] != "" {
+		col, _ = strconv.Atoi(m[4])
+	}
 	base := ""
 	if win != nil {
 		base = win.GetDir()

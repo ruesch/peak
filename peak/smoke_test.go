@@ -851,6 +851,74 @@ func TestSimplePlumb(t *testing.T) {
 	})
 }
 
+func TestPlumbLineCol(t *testing.T) {
+	e, s := setupTest(t, 100, 30)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+	e.Resize()
+	e.Draw()
+	s.Show()
+
+	path := "/peak/mirage/linecol.txt"
+	getVFS().MkdirAll("/peak/mirage", 0755)
+	writeFile(path, []byte("line one\nline two\nline three\n"))
+
+	findWin := func() *Window {
+		for _, c := range e.columns {
+			for _, w := range c.windows {
+				if strings.Contains(w.tag.buffer.GetText(), "linecol.txt") {
+					return w
+				}
+			}
+		}
+		return nil
+	}
+
+	t.Run("LineCol", func(t *testing.T) {
+		e.Plumb(nil, path+":2:5")
+		waitFor(t, e, s, func() bool { return findWin() != nil })
+		win := findWin()
+		tv := win.bodyTextView()
+		if tv == nil {
+			t.Fatal("no text view")
+		}
+		if tv.buffer.cursor.y != 1 {
+			t.Errorf("cursor line: got %d, want 1", tv.buffer.cursor.y)
+		}
+		if tv.buffer.cursor.x != 5 {
+			t.Errorf("cursor col: got %d, want 5", tv.buffer.cursor.x)
+		}
+		if tv.buffer.selection.Active {
+			t.Error("expected no selection for line:col plumb")
+		}
+		// Close window
+		e.Execute(nil, win, "Del")
+	})
+
+	t.Run("LineOnly", func(t *testing.T) {
+		e.Plumb(nil, path+":3")
+		waitFor(t, e, s, func() bool { return findWin() != nil })
+		win := findWin()
+		tv := win.bodyTextView()
+		if tv == nil {
+			t.Fatal("no text view")
+		}
+		if tv.buffer.cursor.y != 2 {
+			t.Errorf("cursor line: got %d, want 2", tv.buffer.cursor.y)
+		}
+		if !tv.buffer.selection.Active {
+			t.Error("expected selection for line-only plumb")
+		}
+		start, end := tv.buffer.selection.Ordered()
+		if start.y != 2 || start.x != 0 {
+			t.Errorf("selection start: got (%d,%d), want (0,2)", start.x, start.y)
+		}
+		if end.y != 2 {
+			t.Errorf("selection end line: got %d, want 2", end.y)
+		}
+	})
+}
+
 func TestAutoCreationCommands(t *testing.T) {
 	// Test Get
 	t.Run("Get", func(t *testing.T) {
