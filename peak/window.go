@@ -552,10 +552,11 @@ func (tv *TextView) ShowLineAt(lineNum int, vrow int) {
 			break
 		}
 	}
-	if vidx != -1 {
-		tv.scroll.Pos = vidx - vrow
-		tv.scroll.Clamp(len(tv.layout), tv.h)
+	if vidx == -1 || (vidx >= tv.scroll.Pos && vidx < tv.scroll.Pos+tv.h) {
+		return
 	}
+	tv.scroll.Pos = vidx - vrow
+	tv.scroll.Clamp(len(tv.layout), tv.h)
 	tv.scroll.AutoScroll = true
 	tv.SyncScroll()
 }
