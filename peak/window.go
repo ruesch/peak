@@ -279,7 +279,13 @@ func (tv *TextView) GetClickWord(mx, my int) string {
 			return word
 		}
 	}
-	return strings.TrimSpace(tv.buffer.GetWordAt(bx, by))
+	// double click on blank area is same as double click on selection
+	// complement that we cannot set mouse cursor position like acme
+	word := strings.TrimSpace(tv.buffer.GetWordAt(bx, by))
+	if word == "" && tv.buffer.selection.Active {
+		return strings.TrimSpace(tv.buffer.GetSelectedText())
+	}
+	return word
 }
 
 func (tv *TextView) ShowCursor(s tcell.Screen) {
