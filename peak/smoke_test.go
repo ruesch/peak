@@ -539,9 +539,9 @@ func TestDragWindowInternal(t *testing.T) {
 	if e.dragWin != w1 {
 		t.Fatal("drag w1 failed")
 	}
-	// W2.y + 2 should be in W2's body
-	e.HandleEvent(tcell.NewEventMouse(0, w2.y+2, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(0, w2.y+2, tcell.ButtonNone, 0))
+	// Drag past W2's midpoint to trigger swap-right
+	e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonNone, 0))
 
 	if col.windows[0] != w2 || col.windows[1] != w1 || col.windows[2] != w3 {
 		t.Errorf("Order after first drag wrong: %d, %d, %d", col.windows[0].ID, col.windows[1].ID, col.windows[2].ID)
@@ -561,6 +561,206 @@ func TestDragWindowInternal(t *testing.T) {
 	if col.windows[0] != w2 || col.windows[1] != w3 || col.windows[2] != w1 {
 		t.Errorf("Final order wrong: expected [w2, w3, w1], got [%d, %d, %d]", col.windows[0].ID, col.windows[1].ID, col.windows[2].ID)
 	}
+}
+
+func TestWindowSwapAllDirections(t *testing.T) {
+	newSetup := func(t *testing.T) (*Editor, *Column, *Window, *Window, *Window) {
+		t.Helper()
+		e, _ := setupTest(t, 120, 60)
+		col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+		e.columns = append(e.columns, col)
+		w1 := col.AddWindow(" w1 ", "c1")
+		w2 := col.AddWindow(" w2 ", "c2")
+		w3 := col.AddWindow(" w3 ", "c3")
+		e.Resize()
+		e.Draw()
+		return e, col, w1, w2, w3
+	}
+
+	checkOrder := func(t *testing.T, col *Column, a, b, c *Window) {
+		t.Helper()
+		if col.windows[0] != a || col.windows[1] != b || col.windows[2] != c {
+			t.Fatalf("order wrong: want [%d,%d,%d], got [%d,%d,%d]",
+				a.ID, b.ID, c.ID,
+				col.windows[0].ID, col.windows[1].ID, col.windows[2].ID)
+		}
+	}
+	checkHeights := func(t *testing.T, w1, w2, w3 *Window, h1, h2, h3 int) {
+		t.Helper()
+		if w1.h != h1 || w2.h != h2 || w3.h != h3 {
+			t.Errorf("heights changed: w1 %d→%d, w2 %d→%d, w3 %d→%d",
+				h1, w1.h, h2, w2.h, h3, w3.h)
+		}
+	}
+
+	// swap-right: drag w2 past w3's midpoint → [w1, w3, w2]
+	t.Run("2to3", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonNone, 0))
+		checkOrder(t, col, w1, w3, w2)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+
+	// swap-left: drag w3 into w2's tag area → [w1, w3, w2]
+	t.Run("3to2", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonNone, 0))
+		checkOrder(t, col, w1, w3, w2)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+
+	// swap-right from first: drag w1 past w2's midpoint → [w2, w1, w3]
+	t.Run("1to2", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonNone, 0))
+		checkOrder(t, col, w2, w1, w3)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+
+	// swap-left to first: drag w2 into w1's tag area → [w2, w1, w3]
+	t.Run("2to1", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonNone, 0))
+		checkOrder(t, col, w2, w1, w3)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+
+	// two consecutive swap-rights: drag w1 past w2, then past w3 → [w2, w3, w1]
+	t.Run("1to3", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonNone, 0))
+		checkOrder(t, col, w2, w3, w1)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+
+	// two consecutive swap-lefts: drag w3 into w2's tag, then into w1's tag → [w3, w1, w2]
+	t.Run("3to1", func(t *testing.T) {
+		e, col, w1, w2, w3 := newSetup(t)
+		h1, h2, h3 := w1.h, w2.h, w3.h
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonNone, 0))
+		checkOrder(t, col, w3, w1, w2)
+		checkHeights(t, w1, w2, w3, h1, h2, h3)
+	})
+}
+
+func TestColumnSwapAllDirections(t *testing.T) {
+	newSetup := func(t *testing.T) (*Editor, *Column, *Column, *Column) {
+		t.Helper()
+		e, _ := setupTest(t, 120, 30)
+		colW := e.w / 3
+		c1 := NewColumn(0, 1, colW, e.h-1, e, e.Execute)
+		c1.explicitWidth = colW
+		c2 := NewColumn(colW, 1, colW, e.h-1, e, e.Execute)
+		c2.explicitWidth = colW
+		c3 := NewColumn(2*colW, 1, e.w-2*colW, e.h-1, e, e.Execute)
+		c3.explicitWidth = e.w - 2*colW
+		e.columns = append(e.columns, c1, c2, c3)
+		e.Resize()
+		e.Draw()
+		return e, c1, c2, c3
+	}
+
+	checkOrder := func(t *testing.T, e *Editor, a, b, c *Column) {
+		t.Helper()
+		if e.columns[0] != a || e.columns[1] != b || e.columns[2] != c {
+			t.Fatalf("column order wrong: want [%p,%p,%p], got [%p,%p,%p]",
+				a, b, c, e.columns[0], e.columns[1], e.columns[2])
+		}
+	}
+	checkWidths := func(t *testing.T, c1, c2, c3 *Column, w1, w2, w3 int) {
+		t.Helper()
+		if c1.w != w1 || c2.w != w2 || c3.w != w3 {
+			t.Errorf("widths changed: c1 %d→%d, c2 %d→%d, c3 %d→%d",
+				w1, c1.w, w2, c2.w, w3, c3.w)
+		}
+	}
+
+	// swap-right: drag c2 past c3's midpoint → [c1, c3, c2]
+	t.Run("2to3", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c1, c3, c2)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
+
+	// swap-left: drag c3 into c2's left edge → [c1, c3, c2]
+	t.Run("3to2", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c1, c3, c2)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
+
+	// swap-right from first: drag c1 past c2's midpoint → [c2, c1, c3]
+	t.Run("1to2", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c2, c1, c3)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
+
+	// swap-left to first: drag c2 near c1's left edge → [c2, c1, c3]
+	t.Run("2to1", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c2, c1, c3)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
+
+	// two consecutive swap-rights: drag c1 past c2, then past c3 → [c2, c3, c1]
+	t.Run("1to3", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c2, c3, c1)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
+
+	// two consecutive swap-lefts: drag c3 to c2's left edge, then to c1's left edge → [c3, c1, c2]
+	t.Run("3to1", func(t *testing.T) {
+		e, c1, c2, c3 := newSetup(t)
+		w1, w2, w3 := c1.w, c2.w, c3.w
+		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonNone, 0))
+		checkOrder(t, e, c3, c1, c2)
+		checkWidths(t, c1, c2, c3, w1, w2, w3)
+	})
 }
 
 func TestSimpleEdit(t *testing.T) {

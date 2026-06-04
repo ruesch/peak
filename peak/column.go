@@ -188,6 +188,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 		if my == c.tag.y {
 			if mx == c.x && buttons == tcell.Button1 {
 				c.editor.dragCol = c
+				c.editor.dragColOrigW = c.explicitWidth
 				return false
 			}
 			if mx > c.x {
@@ -212,6 +213,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 				if buttons == tcell.Button1 {
 					if mx == win.x && my >= win.y && my < win.y+win.tagHeight() {
 						c.editor.dragWin = win
+						c.editor.dragWinOrigH = win.explicitHeight
 						c.editor.ActivateWindow(win)
 						c.editor.focusedView = win.tag
 						return false

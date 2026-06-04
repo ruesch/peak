@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -55,8 +56,10 @@ type Editor struct {
 	columnNodes []DrawNode
 	active      *Window
 	dragView    View
-	dragWin     *Window
-	dragCol     *Column
+	dragWin      *Window
+	dragWinOrigH int
+	dragCol      *Column
+	dragColOrigW int
 	focusedView View
 
 	scrollWin       *Window
@@ -405,39 +408,35 @@ func (e *Editor) ActivateWindow(win *Window) {
 }
 
 func (e *Editor) moveColumnTo(col *Column, mx int) {
-	idx := -1
-	for i, c := range e.columns {
-		if c == col {
-			idx = i
-			break
+	idx := slices.Index(e.columns, col)
+	n := len(e.columns)
+
+	if idx < n-1 && mx > e.columns[idx+1].x+e.columns[idx+1].w/2 {
+		delta := e.dragColOrigW - col.explicitWidth
+		e.columns[idx], e.columns[idx+1] = e.columns[idx+1], e.columns[idx]
+		e.columns[idx+1].explicitWidth = e.dragColOrigW
+		if idx > 0 {
+			e.columns[idx-1].explicitWidth -= delta
 		}
-	}
-	if idx == -1 {
+		e.resize()
 		return
 	}
-
 	if idx == 0 {
-		if len(e.columns) > 1 && mx > e.columns[1].x+e.columns[1].w/2 {
-			e.columns[0], e.columns[1] = e.columns[1], e.columns[0]
-			e.columns[0].explicitWidth, e.columns[1].explicitWidth = 0, 0
-		}
+		return
+	}
+	prev := e.columns[idx-1]
+	combinedW := prev.w + col.w
+	if mx < prev.x+2 {
+		e.columns[idx], e.columns[idx-1] = e.columns[idx-1], e.columns[idx]
+		e.columns[idx-1].explicitWidth = e.dragColOrigW
+		e.columns[idx].explicitWidth = combinedW - e.dragColOrigW
 	} else {
-		prev := e.columns[idx-1]
-		if mx < prev.x+2 { // Swap left
-			e.columns[idx], e.columns[idx-1] = e.columns[idx-1], e.columns[idx]
-			e.columns[idx].explicitWidth, e.columns[idx-1].explicitWidth = 0, 0
-		} else {
-			combinedW := prev.w + col.w
-			minW := 5
-			if mx < prev.x+minW {
-				mx = prev.x + minW
-			}
-			if mx > prev.x+combinedW-minW {
-				mx = prev.x + combinedW - minW
-			}
-			prev.explicitWidth = mx - prev.x
-			col.explicitWidth = combinedW - prev.explicitWidth
+		newW := max(5, min(combinedW-5, mx-prev.x))
+		if newW == prev.explicitWidth {
+			return
 		}
+		col.explicitWidth += prev.explicitWidth - newW
+		prev.explicitWidth = newW
 	}
 	e.resize()
 }
@@ -456,13 +455,9 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 
 	if win.parent != target {
 		old := win.parent
-		for i, w := range old.windows {
-			if w == win {
-				old.windows = append(old.windows[:i], old.windows[i+1:]...)
-				old.Resize(old.x, old.y, old.w, old.h)
-				break
-			}
-		}
+		i := slices.Index(old.windows, win)
+		old.windows = slices.Delete(old.windows, i, i+1)
+		old.Resize(old.x, old.y, old.w, old.h)
 		win.parent, win.explicitHeight = target, 0
 		newIdx := 0
 		for _, w := range target.windows {
@@ -471,45 +466,41 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 			}
 			newIdx++
 		}
-		target.windows = append(target.windows[:newIdx], append([]*Window{win}, target.windows[newIdx:]...)...)
+		target.windows = slices.Insert(target.windows, newIdx, win)
 		target.Resize(target.x, target.y, target.w, target.h)
 		return
 	}
 
-	idx := -1
-	for i, w := range target.windows {
-		if w == win {
-			idx = i
-			break
+	wins := target.windows
+	idx := slices.Index(wins, win)
+	n := len(wins)
+
+	if idx < n-1 && my > wins[idx+1].y+wins[idx+1].h/2 {
+		delta := e.dragWinOrigH - win.explicitHeight
+		wins[idx], wins[idx+1] = wins[idx+1], wins[idx]
+		wins[idx+1].explicitHeight = e.dragWinOrigH
+		if idx > 0 {
+			wins[idx-1].explicitHeight -= delta
 		}
-	}
-	if idx == -1 {
+		target.Resize(target.x, target.y, target.w, target.h)
 		return
 	}
-
 	if idx == 0 {
-		if len(target.windows) > 1 && my > target.windows[1].y+target.windows[1].tagHeight() {
-			target.windows[0], target.windows[1] = target.windows[1], target.windows[0]
-			target.windows[0].explicitHeight, target.windows[1].explicitHeight = 0, 0
-		}
+		return
+	}
+	prev := wins[idx-1]
+	combinedH := prev.h + win.h
+	if my < prev.y+prev.tagHeight() {
+		wins[idx], wins[idx-1] = wins[idx-1], wins[idx]
+		wins[idx-1].explicitHeight = e.dragWinOrigH
+		wins[idx].explicitHeight = combinedH - e.dragWinOrigH
 	} else {
-		prev := target.windows[idx-1]
-		if my < prev.y+prev.tagHeight() { // Swap up
-			target.windows[idx], target.windows[idx-1] = target.windows[idx-1], target.windows[idx]
-			target.windows[idx].explicitHeight, target.windows[idx-1].explicitHeight = 0, 0
-		} else {
-			combinedH := prev.h + win.h
-			minH := win.tagHeight() + 1
-			prevMinH := prev.tagHeight() + 1
-			if my < prev.y+prevMinH {
-				my = prev.y + prevMinH
-			}
-			if my > prev.y+combinedH-minH {
-				my = prev.y + combinedH - minH
-			}
-			prev.explicitHeight = my - prev.y
-			win.explicitHeight = combinedH - prev.explicitHeight
+		newH := max(prev.tagHeight(), min(combinedH-win.tagHeight(), my-prev.y))
+		if newH == prev.explicitHeight {
+			return
 		}
+		win.explicitHeight += prev.explicitHeight - newH
+		prev.explicitHeight = newH
 	}
 	target.Resize(target.x, target.y, target.w, target.h)
 }
