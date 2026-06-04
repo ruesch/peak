@@ -1644,6 +1644,66 @@ func TestDragSelectInTagDoesNotScrollBody(t *testing.T) {
 	_ = s
 }
 
+func TestEscToggleSelection(t *testing.T) {
+	text := strings.Repeat("line\n", 20)
+	tv := NewTextView(text, 0, 0, 40, 5, tcell.StyleDefault, false, true)
+	tv.UpdateLayout()
+
+	selStart := Cursor{0, 3}
+	selEnd := Cursor{2, 5}
+	tv.typingStart = &selStart
+	tv.buffer.cursor = selEnd
+
+	esc := func() { tv.HandleEvent(tcell.NewEventKey(tcell.KeyEsc, 0, 0)) }
+
+	// ESC1: typing → select [selStart, selEnd]
+	esc()
+	if !tv.buffer.selection.Active {
+		t.Fatal("ESC1: selection should be active")
+	}
+	if tv.typingEnd == nil {
+		t.Fatal("ESC1: typingEnd should be set")
+	}
+	s, e := tv.buffer.selection.Ordered()
+	if s != selStart || e != selEnd {
+		t.Errorf("ESC1: selection %v–%v, want %v–%v", s, e, selStart, selEnd)
+	}
+
+	// ESC2: deselect, cursor moves to start of selection
+	esc()
+	if tv.buffer.selection.Active {
+		t.Fatal("ESC2: selection should be cleared")
+	}
+	if tv.buffer.cursor != selStart {
+		t.Errorf("ESC2: cursor %v, want %v", tv.buffer.cursor, selStart)
+	}
+
+	// ESC3: re-select same range
+	esc()
+	if !tv.buffer.selection.Active {
+		t.Fatal("ESC3: selection should be active again")
+	}
+	s2, e2 := tv.buffer.selection.Ordered()
+	if s2 != selStart || e2 != selEnd {
+		t.Errorf("ESC3: selection %v–%v, want %v–%v", s2, e2, selStart, selEnd)
+	}
+
+	// ESC4: deselect again
+	esc()
+	if tv.buffer.selection.Active {
+		t.Fatal("ESC4: selection should be cleared")
+	}
+	if tv.buffer.cursor != selStart {
+		t.Errorf("ESC4: cursor %v, want %v", tv.buffer.cursor, selStart)
+	}
+
+	// Typing must break the toggle cycle (typingEnd cleared)
+	tv.HandleEvent(tcell.NewEventKey(tcell.KeyRune, 'x', 0))
+	if tv.typingEnd != nil {
+		t.Error("after typing: typingEnd should be nil (cycle broken)")
+	}
+}
+
 func TestDragSelectStopsAtLastLine(t *testing.T) {
 	e, s := setupTest(t, 80, 20)
 	col := NewColumn(0, 1, 80, 19, e, e.Execute)

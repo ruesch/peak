@@ -64,6 +64,7 @@ type TextView struct {
 	theme         *Theme
 	tabWidth      int
 	typingStart   *Cursor
+	typingEnd     *Cursor
 	// colorAt, when non-nil, returns a foreground color override for a rune offset.
 	colorAt func(runeOff int) (tcell.Color, bool)
 }
@@ -313,6 +314,7 @@ func (tv *TextView) GetSelectedText() string {
 }
 
 func (tv *TextView) prepareTyping() bool {
+	tv.typingEnd = nil
 	if tv.buffer.selection.Active {
 		start, _ := tv.buffer.selection.Ordered()
 		tv.typingStart = &Cursor{start.x, start.y}
@@ -329,13 +331,17 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 	case *tcell.EventKey:
 		switch ev.Key() {
 		case tcell.KeyEsc:
-			if tv.typingStart != nil {
-				tv.buffer.SetSelection(*tv.typingStart, tv.buffer.cursor)
-				tv.typingStart = nil
+			if tv.typingStart != nil && tv.typingEnd == nil {
+				tv.typingEnd = &Cursor{tv.buffer.cursor.x, tv.buffer.cursor.y}
+				tv.buffer.SetSelection(*tv.typingStart, *tv.typingEnd)
+				tv.ShowLineAt(tv.typingStart.y)
 			} else if tv.buffer.selection.Active {
 				start, _ := tv.buffer.selection.Ordered()
-				tv.buffer.cursor, tv.typingStart = start, nil
+				tv.buffer.cursor = start
 				tv.buffer.ClearSelection()
+			} else if tv.typingStart != nil && tv.typingEnd != nil {
+				tv.buffer.SetSelection(*tv.typingStart, *tv.typingEnd)
+				tv.ShowLineAt(tv.typingStart.y)
 			}
 		case tcell.KeyCtrlZ:
 			tv.typingStart = nil
