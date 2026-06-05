@@ -809,6 +809,13 @@ func (e *Editor) showError(col *Column, win *Window, dir, msg string) {
 }
 
 func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
+	if win != nil && win.kind == WinTerm {
+		tv := win.body.(*TermView)
+		tv.scroll.AutoScroll = true
+		tv.session.Write([]byte(cmd + "\r"))
+		return
+	}
+
 	filename := ""
 	winid := 0
 	if win != nil {
