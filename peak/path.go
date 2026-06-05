@@ -187,15 +187,15 @@ func listDir(path string) (string, error) {
 		return "", err
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	var sb strings.Builder
-	for _, entry := range entries {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
 			name += "/"
 		}
-		sb.WriteString(name + "\n")
+		names[i] = name
 	}
-	return sb.String(), nil
+	return strings.Join(names, "\n"), nil
 }
 
 func join(elem ...string) string {

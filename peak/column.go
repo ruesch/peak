@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/aleksana/peak/internal/session"
@@ -97,6 +98,20 @@ func NewColumn(x, y, w, h int, editor *Editor, onExec func(*Column, *Window, str
 	return c
 }
 
+// contentInsertPos scans windows first-to-last and returns the index at which
+// a new window should be inserted and how many rows of empty space are available
+// there. Empty space is body rows with no content. Returns (len(windows), 0) if
+// no window has spare space.
+func (c *Column) contentInsertPos() (idx int, emptyH int) {
+	for i, win := range c.windows {
+		_, total, bodyH := win.body.GetScroll()
+		if empty := bodyH - total; empty >= win.MinSize() {
+			return i + 1, empty
+		}
+	}
+	return len(c.windows), 0
+}
+
 func (c *Column) AddWindow(tagText, bodyText string) *Window {
 	if tagText == "" {
 		tagText = " ./untitled.txt Get Put Undo Redo Snarf Zerox Del "
@@ -106,7 +121,15 @@ func (c *Column) AddWindow(tagText, bodyText string) *Window {
 	newWin := NewWindow(tagText, bodyText, c, c.editor, c.x, c.y, c.w, 0, c.onExec)
 	newWin.ID = c.editor.nextWinID
 	c.editor.nextWinID++
-	c.windows = append(c.windows, newWin)
+
+	insertIdx, emptyH := c.contentInsertPos()
+	if emptyH > 0 {
+		src := c.windows[insertIdx-1]
+		src.explicitHeight = src.h - emptyH
+		newWin.explicitHeight = emptyH
+	}
+	c.windows = slices.Insert(c.windows, insertIdx, newWin)
+
 	c.editor.ninep.MountWindow(newWin)
 	return newWin
 }
