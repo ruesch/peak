@@ -255,7 +255,6 @@ func (e *Editor) createWindow(target *Column, full string, content string, isDir
 	return newWin
 }
 
-
 func (e *Editor) getTargetWindow(win *Window) *Window {
 	if win != nil {
 		return win
@@ -752,7 +751,6 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	}
 }
 
-
 func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *Window {
 	if dir == "" {
 		if win != nil {
@@ -816,6 +814,12 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 		return
 	}
 
+	pipechar := byte(0)
+	if len(cmd) > 0 && (cmd[0] == '<' || cmd[0] == '>' || cmd[0] == '|') {
+		pipechar = cmd[0]
+		cmd = strings.TrimSpace(cmd[1:])
+	}
+
 	filename := ""
 	winid := 0
 	if win != nil {
@@ -825,18 +829,43 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 		filename = getwd()
 	}
 
-	go func() {
-		out, err := runCommand(cmd, filename, "", winid)
-		if err != nil || len(out) > 0 {
-			msg := out
-			if msg == "" && err != nil {
-				msg = err.Error()
+	var input string
+	var selStart, selEnd Cursor
+	if win != nil {
+		if buf := win.body.GetBuffer(); buf != nil {
+			if buf.selection.Active {
+				selStart, selEnd = buf.selection.Ordered()
+			} else {
+				selStart, selEnd = buf.cursor, buf.cursor
 			}
-			e.screen.PostEvent(tcell.NewEventInterrupt(func() {
-				// Use getPathDir to show error in correct directory context
-				e.showError(col, win, getPathDir(filename), msg)
-			}))
+			if pipechar == '>' || pipechar == '|' {
+				input = buf.GetSelectedText()
+			}
 		}
+	}
+
+	go func() {
+		out, err := runCommand(cmd, filename, input, winid)
+		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+			if (pipechar == '<' || pipechar == '|') && win != nil {
+				if buf := win.body.GetBuffer(); buf != nil {
+					newCursor := buf.SetTextInRange(selStart, selEnd, out)
+					buf.cursor = newCursor
+					buf.ClearSelection()
+				}
+				if err != nil {
+					e.showError(col, win, getPathDir(filename), err.Error())
+				}
+				return
+			}
+			if err != nil || len(out) > 0 {
+				msg := out
+				if msg == "" && err != nil {
+					msg = err.Error()
+				}
+				e.showError(col, win, getPathDir(filename), msg)
+			}
+		}))
 	}()
 }
 
