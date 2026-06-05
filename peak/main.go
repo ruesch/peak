@@ -524,9 +524,6 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 	cur.Resize(cur.x, cur.y, cur.w, cur.h)
 }
 
-// growModerate grows win by max(5, half its current height), stealing rows
-// from the nearest neighbours outward, never below their minimum. Exits
-// maximize mode (matching acme's Button1 handle-click behaviour).
 
 func (e *Editor) Resize() {
 	e.resize()

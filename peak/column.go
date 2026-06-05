@@ -208,6 +208,9 @@ func (c *Column) Resize(x, y, w, h int) {
 	}
 }
 
+// GrowModerate grows win by max(5, half its current height), stealing rows
+// from the nearest neighbours outward, never below their minimum. Exits
+// maximize mode (matching acme's Button1 handle-click behaviour).
 func (c *Column) GrowModerate(win *Window) {
 	if len(c.windows) <= 1 {
 		return
@@ -248,6 +251,8 @@ func (c *Column) Maximize(win *Window) {
 	c.Resize(c.x, c.y, c.w, c.h)
 }
 
+// GrowFull expands win to use all remaining column space while keeping every
+// other window visible at its minimum tag height. Exits the maximized state.
 func (c *Column) GrowFull(win *Window) {
 	c.maximized = nil
 	avail := c.h - 1
