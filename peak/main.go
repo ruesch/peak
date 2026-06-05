@@ -47,20 +47,20 @@ type execReq struct {
 // Editor is the main application state.
 type Editor struct {
 	TreeNode
-	CmdChan     chan func()
-	redrawCh    chan struct{} // capacity-1; 9P goroutines signal after state changes
-	execCh      chan execReq  // buffered; 9P goroutines send executive ops here
-	screen      tcell.Screen
-	tag         *TextView
-	columns     []*Column
-	columnNodes []DrawNode
-	active      *Window
-	dragView    View
+	CmdChan      chan func()
+	redrawCh     chan struct{} // capacity-1; 9P goroutines signal after state changes
+	execCh       chan execReq  // buffered; 9P goroutines send executive ops here
+	screen       tcell.Screen
+	tag          *TextView
+	columns      []*Column
+	columnNodes  []DrawNode
+	active       *Window
+	dragView     View
 	dragWin      *Window
 	dragWinOrigH int
 	dragCol      *Column
 	dragColOrigW int
-	focusedView View
+	focusedView  View
 
 	scrollWin       *Window
 	scrollAmount    int

@@ -223,7 +223,6 @@ func runCommand(cmd, path, input string, winid int) (string, error) {
 	return runLocalCommand(cmd, path, getPathDir(path), input, winid)
 }
 
-
 func remoteRun(f afero.File, relPath, cmd string) (string, error) {
 	if _, err := f.WriteAt([]byte(relPath+"\n"+cmd+"\n"), 0); err != nil {
 		return "", err
