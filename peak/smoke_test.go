@@ -1738,3 +1738,356 @@ func TestDragSelectStopsAtLastLine(t *testing.T) {
 
 	_ = s
 }
+
+// --- window handle button 2/3 tests ---
+
+// verifyNoWindowOverlap asserts no two windows in a column share any row.
+func verifyNoWindowOverlap(t *testing.T, col *Column) {
+	t.Helper()
+	for i, a := range col.windows {
+		for j, b := range col.windows {
+			if i >= j {
+				continue
+			}
+			if a.y < b.y+b.h && b.y < a.y+a.h {
+				t.Errorf("windows [%d] (y=%d,h=%d) and [%d] (y=%d,h=%d) overlap",
+					i, a.y, a.h, j, b.y, b.h)
+			}
+		}
+	}
+}
+
+// TestHandleButton1GrowsModerate verifies that a static Button1 click on a
+// window handle grows the window by stealing rows from nearest neighbours,
+// without collapsing anyone and without triggering maximize.
+func TestHandleButton1GrowsModerate(t *testing.T) {
+	e, _ := setupTest(t, 120, 40)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	col.AddWindow(" w1 ", "c1")
+	w2 := col.AddWindow(" w2 ", "c2")
+	col.AddWindow(" w3 ", "c3")
+
+	e.Resize()
+	e.Draw()
+
+	before := w2.h
+
+	// Static Button1 click on w2's handle.
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
+
+	if w2.h <= before {
+		t.Errorf("Button1 grow: w2.h = %d, want > %d", w2.h, before)
+	}
+	if col.maximized != nil {
+		t.Error("Button1 grow must not set col.maximized")
+	}
+
+	// All windows must still be on-screen.
+	colBottom := col.y + col.h
+	for _, w := range col.windows {
+		if w.y+w.h > colBottom {
+			t.Errorf("window ID=%d (y=%d,h=%d) pushed off-screen after moderate grow", w.ID, w.y, w.h)
+		}
+		if w.h < w.MinSize() {
+			t.Errorf("window ID=%d (h=%d) below MinSize=%d after moderate grow", w.ID, w.h, w.MinSize())
+		}
+	}
+	verifyNoWindowOverlap(t, col)
+}
+
+// TestHandleButton2Maximizes verifies that a static Button2 click on a window
+// handle maximizes that window: it moves to position 0, fills the column, and
+// all other windows are pushed entirely off-screen below the column bottom.
+func TestHandleButton2Maximizes(t *testing.T) {
+	e, _ := setupTest(t, 120, 40)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	col.AddWindow(" w1 ", "c1")
+	col.AddWindow(" w2 ", "c2")
+	w3 := col.AddWindow(" w3 ", "c3")
+
+	e.Resize()
+	e.Draw()
+
+	// Static Button2 click on w3's handle (last window, below others).
+	e.HandleEvent(tcell.NewEventMouse(w3.x, w3.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w3.x, w3.y, tcell.ButtonNone, 0))
+
+	if col.maximized != w3 {
+		t.Fatalf("col.maximized = %v, want w3", col.maximized)
+	}
+	if col.windows[0] != w3 {
+		t.Errorf("maximized window should be at index 0, got ID=%d", col.windows[0].ID)
+	}
+	if w3.h != col.h-1 {
+		t.Errorf("maximized window h = %d, want %d (col.h-1)", w3.h, col.h-1)
+	}
+	if w3.y != col.y+1 {
+		t.Errorf("maximized window y = %d, want %d (top of column)", w3.y, col.y+1)
+	}
+
+	// All other windows must be pushed completely off-screen.
+	colBottom := col.y + col.h
+	for _, w := range col.windows {
+		if w != w3 && w.y < colBottom {
+			t.Errorf("non-maximized window ID=%d should be off-screen (y=%d, colBottom=%d)",
+				w.ID, w.y, colBottom)
+		}
+	}
+
+	verifyNoWindowOverlap(t, col)
+}
+
+// TestHandleButton3GrowsExitsMaximize verifies that a static Button3 click on
+// a maximized window's handle exits maximize mode and makes all windows visible,
+// with the clicked window taking the largest share.
+func TestHandleButton3GrowsExitsMaximize(t *testing.T) {
+	e, _ := setupTest(t, 120, 40)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	col.AddWindow(" w1 ", "c1")
+	w2 := col.AddWindow(" w2 ", "c2")
+	col.AddWindow(" w3 ", "c3")
+
+	e.Resize()
+	e.Draw()
+
+	// Maximize w2 first.
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
+	if col.maximized != w2 {
+		t.Fatal("setup: expected w2 to be maximized")
+	}
+
+	// w2 is now at the top of the column (y = col.y+1). Static Button3 click
+	// on its handle exits maximize and grows w2 while keeping all visible.
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
+
+	if col.maximized != nil {
+		t.Fatalf("col.maximized should be nil after Button3 grow, got %v", col.maximized)
+	}
+
+	colBottom := col.y + col.h
+	for _, w := range col.windows {
+		if w.y+w.h > colBottom {
+			t.Errorf("window ID=%d (y=%d,h=%d) extends below column bottom (%d) after grow",
+				w.ID, w.y, w.h, colBottom)
+		}
+	}
+
+	// All other windows must be at their minimum (tag-only) height.
+	for _, w := range col.windows {
+		if w != w2 && w.h > w.MinSize() {
+			t.Errorf("window ID=%d (h=%d) exceeds minSize=%d after grow; should be collapsed",
+				w.ID, w.h, w.MinSize())
+		}
+	}
+
+	verifyNoWindowOverlap(t, col)
+}
+
+// TestHandleButton2DragMovesWindow verifies that dragging with Button2 on the
+// handle moves/swaps the window without triggering maximize.
+func TestHandleButton2DragMovesWindow(t *testing.T) {
+	e, _ := setupTest(t, 120, 60)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	w1 := col.AddWindow(" w1 ", "c1")
+	w2 := col.AddWindow(" w2 ", "c2")
+	w3 := col.AddWindow(" w3 ", "c3")
+
+	e.Resize()
+	e.Draw()
+
+	// Button2 press on w2's handle.
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button2, 0))
+	if e.dragWin != w2 {
+		t.Fatal("Button2 on handle should start a window drag")
+	}
+	if e.dragWinButton != tcell.Button2 {
+		t.Fatalf("dragWinButton = %v, want Button2", e.dragWinButton)
+	}
+
+	// Drag past w3's midpoint to trigger a swap, then release at a different Y.
+	dragY := w3.y + w3.h/2 + 1
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonNone, 0))
+
+	// Released at a different row → no maximize.
+	if col.maximized != nil {
+		t.Error("dragging with Button2 should not trigger maximize")
+	}
+	// Swap happened: [w1, w3, w2].
+	if col.windows[0] != w1 || col.windows[1] != w3 || col.windows[2] != w2 {
+		t.Errorf("expected order [w1,w3,w2] after drag, got [%d,%d,%d]",
+			col.windows[0].ID, col.windows[1].ID, col.windows[2].ID)
+	}
+	verifyNoWindowOverlap(t, col)
+}
+
+// TestHandleButton3DragMovesWindow verifies that dragging with Button3 on the
+// handle moves/swaps the window without triggering grow.
+func TestHandleButton3DragMovesWindow(t *testing.T) {
+	e, _ := setupTest(t, 120, 60)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	w1 := col.AddWindow(" w1 ", "c1")
+	w2 := col.AddWindow(" w2 ", "c2")
+	w3 := col.AddWindow(" w3 ", "c3")
+
+	e.Resize()
+	e.Draw()
+
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button3, 0))
+	if e.dragWin != w2 {
+		t.Fatal("Button3 on handle should start a window drag")
+	}
+
+	dragY := w3.y + w3.h/2 + 1
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonNone, 0))
+
+	// Released at a different row → no grow triggered.
+	if col.maximized != nil {
+		t.Error("dragging with Button3 should not trigger grow/un-maximize")
+	}
+	if col.windows[0] != w1 || col.windows[1] != w3 || col.windows[2] != w2 {
+		t.Errorf("expected order [w1,w3,w2] after drag, got [%d,%d,%d]",
+			col.windows[0].ID, col.windows[1].ID, col.windows[2].ID)
+	}
+	verifyNoWindowOverlap(t, col)
+}
+
+// TestRemoveMaximizedWindowClearsFlag verifies that removing the maximized
+// window clears col.maximized and restores normal layout for remaining windows.
+func TestRemoveMaximizedWindowClearsFlag(t *testing.T) {
+	e, _ := setupTest(t, 120, 40)
+	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
+	e.columns = append(e.columns, col)
+
+	w1 := col.AddWindow(" w1 ", "c1")
+	w2 := col.AddWindow(" w2 ", "c2")
+
+	e.Resize()
+	e.Draw()
+
+	// Maximize w1.
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonNone, 0))
+	if col.maximized != w1 {
+		t.Fatal("setup: w1 should be maximized")
+	}
+
+	e.RemoveWindow(w1)
+
+	if col.maximized != nil {
+		t.Errorf("col.maximized should be nil after removing the maximized window, got %v", col.maximized)
+	}
+	// w2 must now be laid out on-screen.
+	colBottom := col.y + col.h
+	if w2.y+w2.h > colBottom {
+		t.Errorf("w2 should be on-screen after the maximized window was removed (y=%d,h=%d,colBottom=%d)",
+			w2.y, w2.h, colBottom)
+	}
+}
+
+// TestMoveMaximizedWindowClearsSourceFlag verifies that dragging the maximized
+// window to another column clears col.maximized on the source column and
+// restores normal on-screen layout for windows left behind.
+func TestMoveMaximizedWindowClearsSourceFlag(t *testing.T) {
+	e, _ := setupTest(t, 120, 40)
+	col0 := NewColumn(0, 1, 60, e.h-1, e, e.Execute)
+	col0.explicitWidth = 60
+	col1 := NewColumn(60, 1, 60, e.h-1, e, e.Execute)
+	col1.explicitWidth = 60
+	e.columns = append(e.columns, col0, col1)
+
+	w1 := col0.AddWindow(" w1 ", "c1")
+	w2 := col0.AddWindow(" w2 ", "c2")
+
+	e.Resize()
+	e.Draw()
+
+	// Maximize w1 in col0.
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonNone, 0))
+	if col0.maximized != w1 {
+		t.Fatal("setup: w1 should be maximized in col0")
+	}
+
+	// Drag w1 into col1 using Button1 (regular drag, past col0's right edge).
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button1, 0))
+	if e.dragWin != w1 {
+		t.Fatal("failed to start dragging w1")
+	}
+	e.HandleEvent(tcell.NewEventMouse(col1.x+5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(col1.x+5, 10, tcell.ButtonNone, 0))
+
+	if col0.maximized != nil {
+		t.Errorf("col0.maximized should be nil after w1 moved out, got %v", col0.maximized)
+	}
+	inCol1 := false
+	for _, w := range col1.windows {
+		if w == w1 {
+			inCol1 = true
+		}
+	}
+	if !inCol1 {
+		t.Error("w1 should have moved to col1")
+	}
+
+	// w2 should be on-screen in col0.
+	colBottom := col0.y + col0.h
+	if w2.y+w2.h > colBottom {
+		t.Errorf("w2 should be on-screen in col0 after w1 moved out (y=%d,h=%d,colBottom=%d)",
+			w2.y, w2.h, colBottom)
+	}
+}
+
+// TestColumnGutterAllButtonsStartDrag verifies that Button1, Button2, and
+// Button3 all start a column drag when clicking the column gutter.
+func TestColumnGutterAllButtonsStartDrag(t *testing.T) {
+	for _, btn := range []tcell.ButtonMask{tcell.Button1, tcell.Button2, tcell.Button3} {
+		name := map[tcell.ButtonMask]string{
+			tcell.Button1: "Button1",
+			tcell.Button2: "Button2",
+			tcell.Button3: "Button3",
+		}[btn]
+		t.Run(name, func(t *testing.T) {
+			e, _ := setupTest(t, 120, 30)
+			col0 := NewColumn(0, 1, 60, e.h-1, e, e.Execute)
+			col0.explicitWidth = 60
+			col1 := NewColumn(60, 1, 60, e.h-1, e, e.Execute)
+			col1.explicitWidth = 60
+			e.columns = append(e.columns, col0, col1)
+			e.Resize()
+			e.Draw()
+
+			// Click col1's gutter at (col1.x, col1.y).
+			e.HandleEvent(tcell.NewEventMouse(col1.x, col1.y, btn, 0))
+			if e.dragCol != col1 {
+				t.Fatalf("%s on column gutter: dragCol = %v, want col1", name, e.dragCol)
+			}
+
+			// Drag left — dragCol must persist while button held.
+			e.HandleEvent(tcell.NewEventMouse(30, col1.y, btn, 0))
+			if e.dragCol == nil {
+				t.Fatalf("%s: dragCol cleared during drag", name)
+			}
+
+			// Release — dragCol must clear.
+			e.HandleEvent(tcell.NewEventMouse(30, col1.y, tcell.ButtonNone, 0))
+			if e.dragCol != nil {
+				t.Fatalf("%s: dragCol should be nil after release", name)
+			}
+		})
+	}
+}

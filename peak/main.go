@@ -47,20 +47,22 @@ type execReq struct {
 // Editor is the main application state.
 type Editor struct {
 	TreeNode
-	CmdChan      chan func()
-	redrawCh     chan struct{} // capacity-1; 9P goroutines signal after state changes
-	execCh       chan execReq  // buffered; 9P goroutines send executive ops here
-	screen       tcell.Screen
-	tag          *TextView
-	columns      []*Column
-	columnNodes  []DrawNode
-	active       *Window
-	dragView     View
-	dragWin      *Window
-	dragWinOrigH int
-	dragCol      *Column
-	dragColOrigW int
-	focusedView  View
+	CmdChan       chan func()
+	redrawCh      chan struct{} // capacity-1; 9P goroutines signal after state changes
+	execCh        chan execReq  // buffered; 9P goroutines send executive ops here
+	screen        tcell.Screen
+	tag           *TextView
+	columns       []*Column
+	columnNodes   []DrawNode
+	active        *Window
+	dragView      View
+	dragWin       *Window
+	dragWinOrigH  int
+	dragWinButton tcell.ButtonMask
+	dragWinStartY int
+	dragCol       *Column
+	dragColOrigW  int
+	focusedView   View
 
 	scrollWin       *Window
 	scrollAmount    int
@@ -328,7 +330,7 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 		}
 
 		if e.dragCol != nil {
-			if buttons&tcell.Button1 != 0 {
+			if buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
 				e.moveColumnTo(e.dragCol, mx)
 				return false, true
 			}
@@ -336,9 +338,19 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 			return false, true
 		}
 		if e.dragWin != nil {
-			if buttons&tcell.Button1 != 0 {
+			if buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
 				e.moveWindowTo(e.dragWin, mx, my)
 				return false, true
+			}
+			if e.dragWin.y == e.dragWinStartY {
+				switch e.dragWinButton {
+				case tcell.Button1:
+					e.growModerate(e.dragWin)
+				case tcell.Button2:
+					e.maximizeWindow(e.dragWin)
+				case tcell.Button3:
+					e.growWindow(e.dragWin)
+				}
 			}
 			e.dragWin = nil
 			return false, true
@@ -461,6 +473,9 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 	if toCol != nil {
 		i := slices.Index(cur.windows, win)
 		cur.windows = slices.Delete(cur.windows, i, i+1)
+		if cur.maximized == win {
+			cur.maximized = nil
+		}
 		cur.Resize(cur.x, cur.y, cur.w, cur.h)
 		win.parent, win.explicitHeight = toCol, 0
 		newIdx := 0
@@ -507,6 +522,80 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 		prev.explicitHeight = newH
 	}
 	cur.Resize(cur.x, cur.y, cur.w, cur.h)
+}
+
+// growModerate grows win by max(5, half its current height), stealing rows
+// from the nearest neighbours outward, never below their minimum. Exits
+// maximize mode (matching acme's Button1 handle-click behaviour).
+func (e *Editor) growModerate(win *Window) {
+	col := win.parent
+	if col == nil || len(col.windows) <= 1 {
+		return
+	}
+	idx := slices.Index(col.windows, win)
+
+	target := min(win.h+max(5, win.h/2), col.h-1)
+	needed := target - win.h
+	if needed <= 0 {
+		return
+	}
+
+	win.explicitHeight = win.h
+	for k := 1; k < len(col.windows) && needed > 0; k++ {
+		for _, j := range []int{idx + k, idx - k} {
+			if j < 0 || j >= len(col.windows) || needed <= 0 {
+				continue
+			}
+			nb := col.windows[j]
+			give := min(needed, nb.h-nb.MinSize())
+			if give <= 0 {
+				continue
+			}
+			nb.explicitHeight = nb.h - give
+			win.explicitHeight += give
+			needed -= give
+		}
+	}
+	col.maximized = nil
+	col.Resize(col.x, col.y, col.w, col.h)
+}
+
+func (e *Editor) maximizeWindow(win *Window) {
+	col := win.parent
+	if col == nil {
+		return
+	}
+	idx := slices.Index(col.windows, win)
+	if idx > 0 {
+		col.windows = slices.Delete(col.windows, idx, idx+1)
+		col.windows = slices.Insert(col.windows, 0, win)
+	}
+	col.maximized = win
+	col.Resize(col.x, col.y, col.w, col.h)
+}
+
+// growWindow expands win to use all remaining column space while keeping every
+// other window visible at its minimum tag height. Exits the maximized state.
+func (e *Editor) growWindow(win *Window) {
+	col := win.parent
+	if col == nil || len(col.windows) == 0 {
+		return
+	}
+	col.maximized = nil
+	avail := col.h - 1
+	for _, w := range col.windows {
+		if w != win {
+			avail -= w.MinSize()
+		}
+	}
+	for _, w := range col.windows {
+		if w != win {
+			w.explicitHeight = w.MinSize()
+		} else {
+			w.explicitHeight = max(w.MinSize(), avail)
+		}
+	}
+	col.Resize(col.x, col.y, col.w, col.h)
 }
 
 func (e *Editor) Resize() {

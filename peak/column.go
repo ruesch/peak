@@ -38,6 +38,7 @@ type Column struct {
 	onExec        func(*Column, *Window, string) bool
 	explicitWidth int
 	winCache      []DrawNode
+	maximized     *Window
 }
 
 func (c *Column) Layout() {}
@@ -101,6 +102,7 @@ func (c *Column) AddWindow(tagText, bodyText string) *Window {
 		tagText = " ./untitled.txt Get Put Undo Redo Snarf Zerox Del "
 	}
 
+	c.maximized = nil
 	newWin := NewWindow(tagText, bodyText, c, c.editor, c.x, c.y, c.w, 0, c.onExec)
 	newWin.ID = c.editor.nextWinID
 	c.editor.nextWinID++
@@ -122,6 +124,7 @@ func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 		tagText = " " + join(dir, "-"+name) + " Zerox Del "
 	}
 
+	c.maximized = nil
 	newWin, err := NewTermWindow(tagText, c, c.editor, c.x, c.y, c.w, 0, cmd, dir, c.onExec)
 	if err != nil {
 		return nil, err
@@ -134,6 +137,7 @@ func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 }
 
 func (c *Column) AddSessionTermWindow(title string, sess session.Session) (*Window, error) {
+	c.maximized = nil
 	newWin, err := newTermWindowFromSession(" "+title+" Zerox Del ", sess, c, c.editor, c.x, c.y, c.w, 0, c.onExec)
 	if err != nil {
 		return nil, err
@@ -150,6 +154,22 @@ func (c *Column) Resize(x, y, w, h int) {
 	c.gutter.Resize(x, y, 1, h)
 	c.tag.Resize(x+1, y, w-1, 1)
 	if len(c.windows) == 0 {
+		return
+	}
+
+	if c.maximized != nil {
+		// Maximized window fills the column; all others are pushed off-screen below.
+		c.maximized.explicitHeight = h - 1
+		c.maximized.Resize(x, y+1, w, h-1)
+		yOffset := y + h
+		for _, win := range c.windows {
+			if win != c.maximized {
+				wh := win.MinSize()
+				win.explicitHeight = wh
+				win.Resize(x, yOffset, w, wh)
+				yOffset += wh
+			}
+		}
 		return
 	}
 
@@ -186,7 +206,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 		buttons := me.Buttons()
 
 		if my == c.tag.y {
-			if mx == c.x && buttons == tcell.Button1 {
+			if mx == c.x && buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
 				c.editor.dragCol = c
 				c.editor.dragColOrigW = c.explicitWidth
 				return false
@@ -210,14 +230,17 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 
 		for _, win := range c.windows {
 			if win.Contains(mx, my) {
+				onHandle := mx == win.x && my >= win.y && my < win.y+win.tagHeight()
+				if onHandle && buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
+					c.editor.dragWin = win
+					c.editor.dragWinOrigH = win.explicitHeight
+					c.editor.dragWinButton = buttons
+					c.editor.dragWinStartY = win.y
+					c.editor.ActivateWindow(win)
+					c.editor.focusedView = win.tag
+					return false
+				}
 				if buttons == tcell.Button1 {
-					if mx == win.x && my >= win.y && my < win.y+win.tagHeight() {
-						c.editor.dragWin = win
-						c.editor.dragWinOrigH = win.explicitHeight
-						c.editor.ActivateWindow(win)
-						c.editor.focusedView = win.tag
-						return false
-					}
 					c.editor.ActivateWindow(win)
 					if my < win.y+win.tagHeight() {
 						c.editor.focusedView = win.tag

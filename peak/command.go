@@ -389,6 +389,9 @@ func (e *Editor) RemoveWindow(target *Window) {
 	for i, w := range col.windows {
 		if w == target {
 			col.windows = append(col.windows[:i], col.windows[i+1:]...)
+			if col.maximized == target {
+				col.maximized = nil
+			}
 			col.Resize(col.x, col.y, col.w, col.h)
 			if e.active == target {
 				if len(col.windows) > 0 {
