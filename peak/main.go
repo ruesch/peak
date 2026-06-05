@@ -442,47 +442,51 @@ func (e *Editor) moveColumnTo(col *Column, mx int) {
 }
 
 func (e *Editor) moveWindowTo(win *Window, mx, my int) {
-	var target *Column
-	for _, col := range e.columns {
-		if mx >= col.x && mx < col.x+col.w {
-			target = col
-			break
-		}
-	}
-	if target == nil {
+	colIdx := slices.Index(e.columns, win.parent)
+	if colIdx < 0 {
 		return
 	}
+	cur := e.columns[colIdx]
 
-	if win.parent != target {
-		old := win.parent
-		i := slices.Index(old.windows, win)
-		old.windows = slices.Delete(old.windows, i, i+1)
-		old.Resize(old.x, old.y, old.w, old.h)
-		win.parent, win.explicitHeight = target, 0
+	var toCol *Column
+	if colIdx < len(e.columns)-1 && mx >= cur.x+cur.w {
+		toCol = e.columns[colIdx+1]
+	} else if colIdx > 0 {
+		prev := e.columns[colIdx-1]
+		if mx < prev.x+prev.w-prev.w/4 {
+			toCol = prev
+		}
+	}
+
+	if toCol != nil {
+		i := slices.Index(cur.windows, win)
+		cur.windows = slices.Delete(cur.windows, i, i+1)
+		cur.Resize(cur.x, cur.y, cur.w, cur.h)
+		win.parent, win.explicitHeight = toCol, 0
 		newIdx := 0
-		for _, w := range target.windows {
+		for _, w := range toCol.windows {
 			if my < w.y+w.h/2 {
 				break
 			}
 			newIdx++
 		}
-		target.windows = slices.Insert(target.windows, newIdx, win)
-		target.Resize(target.x, target.y, target.w, target.h)
+		toCol.windows = slices.Insert(toCol.windows, newIdx, win)
+		toCol.Resize(toCol.x, toCol.y, toCol.w, toCol.h)
 		return
 	}
 
-	wins := target.windows
+	wins := cur.windows
 	idx := slices.Index(wins, win)
 	n := len(wins)
 
-	if idx < n-1 && my > wins[idx+1].y+wins[idx+1].h/2 {
+	if idx < n-1 && my > wins[idx+1].y {
 		delta := e.dragWinOrigH - win.explicitHeight
 		wins[idx], wins[idx+1] = wins[idx+1], wins[idx]
 		wins[idx+1].explicitHeight = e.dragWinOrigH
 		if idx > 0 {
 			wins[idx-1].explicitHeight -= delta
 		}
-		target.Resize(target.x, target.y, target.w, target.h)
+		cur.Resize(cur.x, cur.y, cur.w, cur.h)
 		return
 	}
 	if idx == 0 {
@@ -502,7 +506,7 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 		win.explicitHeight += prev.explicitHeight - newH
 		prev.explicitHeight = newH
 	}
-	target.Resize(target.x, target.y, target.w, target.h)
+	cur.Resize(cur.x, cur.y, cur.w, cur.h)
 }
 
 func (e *Editor) Resize() {

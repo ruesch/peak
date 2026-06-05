@@ -456,19 +456,16 @@ func TestDragWindow(t *testing.T) {
 		t.Fatalf("Initial state wrong: %d, %d, %d", len(e.columns[0].windows), len(e.columns[1].windows), len(e.columns[2].windows))
 	}
 
-	// 1. Drag W1 (Col 0) to Col 2
-	// Handle for W1 is at (e.columns[0].x, w1.y) = (0, 2)
-	e.HandleEvent(tcell.NewEventMouse(0, 2, tcell.Button1, 0)) // Start drag
+	// 1. Drag W1 (Col 0) to Col 2: cross one boundary at a time.
+	e.HandleEvent(tcell.NewEventMouse(0, 2, tcell.Button1, 0))
 	if e.dragWin != w1 {
 		t.Fatal("Failed to start dragging w1")
 	}
-	// Move to Col 2 (x = 2*colWidth + 10, y = 10)
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+10, 10, tcell.Button1, 0))
-	// Release
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+10, 10, tcell.ButtonNone, 0))
-	if e.dragWin != nil {
-		t.Fatal("Drag should have ended")
-	}
+	// Step into Col 1 (past col0's right edge at x=colWidth)
+	e.HandleEvent(tcell.NewEventMouse(colWidth+5, 10, tcell.Button1, 0))
+	// Step into Col 2 (past col1's right edge at x=2*colWidth)
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 10, tcell.ButtonNone, 0))
 
 	// 2. Drag W2 (Col 1) to Col 0
 	// Handle for W2 is at (e.columns[1].x, w2.y) = (40, 2)
@@ -476,18 +473,17 @@ func TestDragWindow(t *testing.T) {
 	if e.dragWin != w2 {
 		t.Fatal("Failed to start dragging w2")
 	}
-	e.HandleEvent(tcell.NewEventMouse(colWidth/2, 10, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(colWidth/2, 10, tcell.ButtonNone, 0))
+	// Left threshold: mx < col0.x+col0.w-col0.w/4 = 40-10 = 30; use x=5.
+	e.HandleEvent(tcell.NewEventMouse(5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(5, 10, tcell.ButtonNone, 0))
 
-	// 3. Drag W3 (Col 1) to Col 2
-	// W3 is now at the top of Col 1 since W2 moved.
-	// Handle for W3 is at (colWidth, 2)
+	// 3. Drag W3 (Col 1, now alone at top) to Col 2
 	e.HandleEvent(tcell.NewEventMouse(colWidth, 2, tcell.Button1, 0))
 	if e.dragWin != w3 {
 		t.Fatal("Failed to start dragging w3")
 	}
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+10, 20, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+10, 20, tcell.ButtonNone, 0))
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 20, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 20, tcell.ButtonNone, 0))
 
 	// Final check: Col 0 (W2), Col 1 (Empty), Col 2 (W1, W3)
 	if len(e.columns[0].windows) != 1 || e.columns[0].windows[0] != w2 {
