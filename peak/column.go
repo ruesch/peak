@@ -208,6 +208,64 @@ func (c *Column) Resize(x, y, w, h int) {
 	}
 }
 
+func (c *Column) GrowModerate(win *Window) {
+	if len(c.windows) <= 1 {
+		return
+	}
+	idx := slices.Index(c.windows, win)
+	target := min(win.h+max(5, win.h/2), c.h-1)
+	needed := target - win.h
+	if needed <= 0 {
+		return
+	}
+	win.explicitHeight = win.h
+	for k := 1; k < len(c.windows) && needed > 0; k++ {
+		for _, j := range []int{idx + k, idx - k} {
+			if j < 0 || j >= len(c.windows) || needed <= 0 {
+				continue
+			}
+			nb := c.windows[j]
+			give := min(needed, nb.h-nb.MinSize())
+			if give <= 0 {
+				continue
+			}
+			nb.explicitHeight = nb.h - give
+			win.explicitHeight += give
+			needed -= give
+		}
+	}
+	c.maximized = nil
+	c.Resize(c.x, c.y, c.w, c.h)
+}
+
+func (c *Column) Maximize(win *Window) {
+	idx := slices.Index(c.windows, win)
+	if idx > 0 {
+		c.windows = slices.Delete(c.windows, idx, idx+1)
+		c.windows = slices.Insert(c.windows, 0, win)
+	}
+	c.maximized = win
+	c.Resize(c.x, c.y, c.w, c.h)
+}
+
+func (c *Column) GrowFull(win *Window) {
+	c.maximized = nil
+	avail := c.h - 1
+	for _, w := range c.windows {
+		if w != win {
+			avail -= w.MinSize()
+		}
+	}
+	for _, w := range c.windows {
+		if w != win {
+			w.explicitHeight = w.MinSize()
+		} else {
+			w.explicitHeight = max(w.MinSize(), avail)
+		}
+	}
+	c.Resize(c.x, c.y, c.w, c.h)
+}
+
 func (c *Column) winNodes() []DrawNode {
 	if cap(c.winCache) < len(c.windows) {
 		c.winCache = make([]DrawNode, len(c.windows))
