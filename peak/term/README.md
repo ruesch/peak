@@ -1,5 +1,8 @@
 # terminal
 
+Copied from https://github.com/micro-editor/terminal, itself a fork of
+https://github.com/james4k/terminal. Licensed under MIT.
+
 Package terminal is a vt10x terminal emulation backend, influenced
 largely by st, rxvt, xterm, and iTerm as reference. Use it for terminal
 muxing, a terminal emulation frontend, or wherever else you need
