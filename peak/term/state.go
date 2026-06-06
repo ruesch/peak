@@ -4,8 +4,9 @@ import (
 	"io"
 	"log"
 	"sync"
+	"unicode"
 
-	"github.com/rivo/uniseg"
+	uwidth "golang.org/x/text/width"
 )
 
 const (
@@ -161,11 +162,14 @@ func (t *State) runeWidth(r rune) int {
 	if r < 32 {
 		return 0
 	}
-	w := uniseg.StringWidth(string(r))
-	if w == 0 {
+	if unicode.IsMark(r) || unicode.Is(unicode.Cf, r) {
 		return 1
 	}
-	return w
+	k := uwidth.LookupRune(r).Kind()
+	if k == uwidth.EastAsianWide || k == uwidth.EastAsianFullwidth {
+		return 2
+	}
+	return 1
 }
 
 // Cell returns the character code, foreground color, background

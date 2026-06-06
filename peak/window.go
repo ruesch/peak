@@ -5,10 +5,12 @@ import (
 	"sync"
 	"time"
 
+	"unicode"
+
 	"github.com/aleksana/peak/internal/session"
 	"github.com/aleksana/peak/internal/wevent"
 	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/uniseg"
+	uwidth "golang.org/x/text/width"
 )
 
 type WinKind int
@@ -93,11 +95,14 @@ func (tv *TextView) runeWidth(r rune, visualPos int) int {
 	if r == '\t' {
 		return tv.tabWidth - (visualPos % tv.tabWidth)
 	}
-	w := uniseg.StringWidth(string(r))
-	if w == 0 {
+	if unicode.IsMark(r) || unicode.Is(unicode.Cf, r) || unicode.IsControl(r) {
 		return 1
 	}
-	return w
+	k := uwidth.LookupRune(r).Kind()
+	if k == uwidth.EastAsianWide || k == uwidth.EastAsianFullwidth {
+		return 2
+	}
+	return 1
 }
 
 func (tv *TextView) UpdateLayout() {
@@ -245,7 +250,7 @@ func (tv *TextView) Draw(s tcell.Screen) {
 			char := r
 			if r == '\t' {
 				char = ' '
-			} else if uniseg.StringWidth(string(r)) == 0 {
+			} else if unicode.IsMark(r) || unicode.Is(unicode.Cf, r) || unicode.IsControl(r) {
 				char = '□'
 			}
 

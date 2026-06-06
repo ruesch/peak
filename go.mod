@@ -13,7 +13,6 @@ require (
 	github.com/knusbaum/go9p v1.18.0
 	github.com/odvcencio/gotreesitter v0.10.1
 	github.com/pkg/sftp v1.13.10
-	github.com/rivo/uniseg v0.4.7
 	golang.org/x/crypto v0.50.0
 	golang.org/x/sys v0.43.0
 	golang.org/x/text v0.36.0
@@ -41,6 +40,7 @@ require (
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.1 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
