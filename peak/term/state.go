@@ -392,8 +392,10 @@ func (t *State) clear(x0, y0, x1, y1 int) {
 	for y := y0; y <= y1; y++ {
 		t.dirty[y] = true
 		for x := x0; x <= x1; x++ {
-			t.lines[y][x] = t.cur.attr
 			t.lines[y][x].c = ' '
+			t.lines[y][x].mode = 0
+			t.lines[y][x].fg = t.cur.attr.fg
+			t.lines[y][x].bg = t.cur.attr.bg
 		}
 	}
 }
