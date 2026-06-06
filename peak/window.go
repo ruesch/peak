@@ -95,7 +95,7 @@ func (tv *TextView) runeWidth(r rune, visualPos int) int {
 	}
 	w := uniseg.StringWidth(string(r))
 	if w == 0 {
-		return 0
+		return 1
 	}
 	return w
 }
@@ -245,6 +245,8 @@ func (tv *TextView) Draw(s tcell.Screen) {
 			char := r
 			if r == '\t' {
 				char = ' '
+			} else if uniseg.StringWidth(string(r)) == 0 {
+				char = '□'
 			}
 
 			for k := 0; k < width && vcol < tv.w; k++ {
