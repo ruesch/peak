@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -380,6 +381,7 @@ func (f *winColorFile) Close() error {
 		}
 		newSpans = append(newSpans, colorSpan{q0, q1, parts[2]})
 	}
+	sort.SliceStable(newSpans, func(i, j int) bool { return newSpans[i].q0 < newSpans[j].q0 })
 	f.win.lk.Lock()
 	if f.win.mutSeq == f.win.bodySnapSeq {
 		f.win.spans = newSpans

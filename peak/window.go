@@ -806,11 +806,19 @@ func (win *Window) adjustSpans(q0, q1Old, q1New int) {
 // colorAtFunc returns a closure that looks up a rune offset in the given spans.
 func (win *Window) colorAtFunc(spans []colorSpan) func(int) (tcell.Color, bool) {
 	theme := win.editor.theme
+	i := 0
+	lastOff := -1
 	return func(runeOff int) (tcell.Color, bool) {
-		for _, sp := range spans {
-			if runeOff >= sp.q0 && runeOff < sp.q1 {
-				return theme.colorForAttr(sp.attr), true
-			}
+		if runeOff < lastOff {
+			i = 0
+		}
+		lastOff = runeOff
+
+		for i < len(spans) && spans[i].q1 <= runeOff {
+			i++
+		}
+		if i < len(spans) && spans[i].q0 <= runeOff && runeOff < spans[i].q1 {
+			return theme.colorForAttr(spans[i].attr), true
 		}
 		return 0, false
 	}
