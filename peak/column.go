@@ -104,8 +104,8 @@ func NewColumn(x, y, w, h int, editor *Editor, onExec func(*Column, *Window, str
 // no window has spare space.
 func (c *Column) contentInsertPos() (idx int, emptyH int) {
 	for i, win := range c.windows {
-		_, total, bodyH := win.body.GetScroll()
-		if empty := bodyH - total; empty >= win.MinSize() {
+		scroll, total, bodyH := win.body.GetScroll()
+		if empty := bodyH - max(0, total-scroll); empty >= win.MinSize() {
 			return i + 1, empty
 		}
 	}
