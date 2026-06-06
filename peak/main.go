@@ -487,6 +487,8 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 		}
 		toCol.windows = slices.Insert(toCol.windows, newIdx, win)
 		toCol.Resize(toCol.x, toCol.y, toCol.w, toCol.h)
+		e.dragWinOrigH = win.explicitHeight
+		e.dragWinStartY = -1 // window moved columns; suppress grow-on-release
 		return
 	}
 
