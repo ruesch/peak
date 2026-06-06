@@ -83,7 +83,7 @@ func distribute(children []DrawNode, total int, lastTotal int) []int {
 			totalExplicit = 0
 			for i, c := range children {
 				if s, ok := c.(Sizer); ok && s.PreferredSize() > 0 {
-					heights[i] = max(s.MinSize(), int(float64(heights[i]) * scale))
+					heights[i] = max(s.MinSize(), int(float64(heights[i])*scale))
 					totalExplicit += heights[i]
 				}
 			}

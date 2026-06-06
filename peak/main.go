@@ -524,7 +524,6 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 	cur.Resize(cur.x, cur.y, cur.w, cur.h)
 }
 
-
 func (e *Editor) Resize() {
 	e.resize()
 }
