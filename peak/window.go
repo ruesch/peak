@@ -359,6 +359,10 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 		case tcell.KeyCtrlY:
 			tv.typingStart = nil
 			tv.buffer.Redo()
+		case tcell.KeyCtrlA:
+			tv.typingStart = nil
+			lc := tv.buffer.LineCount()
+			tv.buffer.SetSelection(Cursor{0, 0}, Cursor{len(tv.buffer.GetLine(lc - 1)), lc - 1})
 		case tcell.KeyCtrlC:
 			tv.buffer.Snarf()
 		case tcell.KeyCtrlX:
