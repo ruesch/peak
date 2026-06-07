@@ -216,7 +216,8 @@ func (c *Column) GrowModerate(win *Window) {
 		return
 	}
 	idx := slices.Index(c.windows, win)
-	target := min(win.h+max(5, win.h/2), c.h-1)
+	bodyH := win.h - win.tagHeight()
+	target := min(win.h+max(min(5, win.h), bodyH/2), c.h-1)
 	needed := target - win.h
 	if needed <= 0 {
 		return
@@ -228,7 +229,7 @@ func (c *Column) GrowModerate(win *Window) {
 				continue
 			}
 			nb := c.windows[j]
-			give := min(needed, nb.h-nb.MinSize())
+			give := min(needed, max(1, nb.h/2), nb.h-nb.MinSize())
 			if give <= 0 {
 				continue
 			}
