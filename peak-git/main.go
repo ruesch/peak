@@ -34,8 +34,9 @@ func main() {
 
 // repoState tracks one mounted git repository.
 type repoState struct {
-	serverF afero.File // tears down the /srv entry when closed
-	windows map[string]bool
+	serverF   afero.File // tears down the /srv entry when closed
+	mountPath string     // peak VFS path where the repo FS is mounted
+	windows   map[string]bool
 }
 
 // watchEvents opens /event and processes window lifecycle events. All map
@@ -96,14 +97,15 @@ func handleNew(peakFs afero.Fs, winID string, repos map[string]*repoState, winRe
 	}
 
 	if repos[repoPath] == nil {
-		serverF, err := startAndBindRepo(peakFs, repoPath)
+		serverF, mountPath, err := startAndBindRepo(peakFs, repoPath)
 		if err != nil {
 			log.Printf("peak-git: start %s: %v", repoPath, err)
 			return
 		}
 		repos[repoPath] = &repoState{
-			serverF: serverF,
-			windows: make(map[string]bool),
+			serverF:   serverF,
+			mountPath: mountPath,
+			windows:   make(map[string]bool),
 		}
 	}
 	repos[repoPath].windows[winID] = true
@@ -128,17 +130,18 @@ func handleClose(peakFs afero.Fs, winID string, repos map[string]*repoState, win
 
 	// Last window in this repo closed — tear down the server.
 	state.serverF.Close()
+	mp := state.mountPath
 	delete(repos, repoPath)
-	go unbindRepo(peakFs, repoPath)
+	go unbindRepo(peakFs, mp)
 }
 
 // startAndBindRepo opens the git repo, posts a virtual socket to /srv, serves
 // 9P over it, and mounts it into peak's VFS. Returns the server file whose
-// Close tears down the service.
-func startAndBindRepo(peakFs afero.Fs, repoPath string) (afero.File, error) {
+// Close tears down the service, and the peak VFS path where the FS is mounted.
+func startAndBindRepo(peakFs afero.Fs, repoPath string) (afero.File, string, error) {
 	repo, err := gogit.PlainOpen(repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("open repo: %w", err)
+		return nil, "", fmt.Errorf("open repo: %w", err)
 	}
 
 	h := sha256.Sum256([]byte(repoPath))
@@ -146,7 +149,7 @@ func startAndBindRepo(peakFs afero.Fs, repoPath string) (afero.File, error) {
 
 	serverF, err := peakFs.OpenFile("/srv/"+name, os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("srv/%s: %w", name, err)
+		return nil, "", fmt.Errorf("srv/%s: %w", name, err)
 	}
 
 	srv := vfs.NewNinePSrv(newRepoFs(repoPath, repo))
@@ -155,22 +158,23 @@ func startAndBindRepo(peakFs afero.Fs, repoPath string) (afero.File, error) {
 	mountF, err := peakFs.OpenFile("/mount", os.O_WRONLY, 0)
 	if err != nil {
 		serverF.Close()
-		return nil, fmt.Errorf("/mount: %w", err)
+		return nil, "", fmt.Errorf("/mount: %w", err)
 	}
-	fmt.Fprintf(mountF, "/srv/%s %s\n", name, filepath.Join(repoPath, ".git", "fs"))
+	// Mount under peak's namespace: /peak/<name> (auto-prefixed by peak).
+	fmt.Fprintf(mountF, "/peak/srv/%s /peak/%s\n", name, name)
 	mountF.Close()
 
-	return serverF, nil
+	return serverF, "/peak/" + name, nil
 }
 
-func unbindRepo(peakFs afero.Fs, repoPath string) {
+func unbindRepo(peakFs afero.Fs, mountPath string) {
 	f, err := peakFs.OpenFile("/unmount", os.O_WRONLY, 0)
 	if err != nil {
 		log.Printf("peak-git: open /unmount: %v", err)
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\n", filepath.Join(repoPath, ".git", "fs"))
+	fmt.Fprintf(f, "%s\n", mountPath)
 }
 
 // findRepo walks up from path to find the nearest git worktree root.

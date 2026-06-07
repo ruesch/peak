@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -100,22 +99,24 @@ func (p *NineP) BroadcastPut(win *Window) {
 	p.bus.broadcast(fmt.Sprintf("put %d %s\n", win.ID, win.GetFilename()))
 }
 
-// Mount attaches a 9P server to path in the VFS. The first return value is the
-// resolved source path suitable for display; callers that want the mount to
-// appear in /mount should record it themselves via record().
+// Mount attaches a 9P server to path in the VFS. Returns the resolved source
+// Mount attaches a 9P server to path in the VFS. If socket can be opened as a
+// file in peak's own VFS it is treated as a virtual socket; otherwise it is
+// dialled as a Unix socket. Returns the resolved destination path. Callers
+// that want the mount to appear in /mount should record it themselves via
+// record().
 func (p *NineP) Mount(socket, path string) (string, error) {
-	// Try virtual socket first: explicit positive check against the namespace.
-	if conn, err := p.nsFs.openSocket(context.Background(), socket); err == nil {
+	if f, err := p.vfs.OpenFile(socket, os.O_RDONLY, 0); err == nil {
 		mountPath := normalizePath(path, "")
-		clientFs, err := vfs.NewNinePClientFsFromConn(conn)
+		clientFs, err := vfs.NewNinePClientFsFromConn(f)
 		if err != nil {
-			conn.Close()
+			f.Close()
 			return "", err
 		}
 		p.vfs.Mount(mountPath, clientFs)
-		return filepath.Join(p.nsBase, socket), nil
+		return mountPath, nil
 	}
-	// Not in the namespace — must be a real Unix socket.
+	// Not in the VFS — dial as a real Unix socket.
 	socket = normalizePath(socket, "")
 	path = normalizePath(path, "")
 	clientFs, err := vfs.NewNinePClientFs("unix", socket)
@@ -123,7 +124,7 @@ func (p *NineP) Mount(socket, path string) (string, error) {
 		return "", err
 	}
 	p.vfs.Mount(path, clientFs)
-	return socket, nil
+	return path, nil
 }
 
 func (p *NineP) Umount(path string) {

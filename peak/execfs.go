@@ -237,15 +237,14 @@ func (f *mountFile) WriteAt(p []byte, _ int64) (int, error) {
 	if len(parts) < 2 {
 		return len(p), nil
 	}
-	resolvedSrc, err := f.editor.ninep.Mount(parts[0], parts[1])
+	mountedPath, err := f.editor.ninep.Mount(parts[0], parts[1])
 	if err != nil {
 		return 0, err
 	}
-	mountedPath := normalizePath(parts[1], "")
 	if f.conn != nil {
 		f.conn.RegisterCleanup(func() { f.editor.ninep.Umount(mountedPath) })
 	}
-	f.editor.ninep.record(&f.editor.ninep.mounts, resolvedSrc, mountedPath)
+	f.editor.ninep.record(&f.editor.ninep.mounts, parts[0], mountedPath)
 	return len(p), nil
 }
 

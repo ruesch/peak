@@ -292,7 +292,7 @@ func TestMountFileReadsCurrentMounts(t *testing.T) {
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
 
 	dst := "/peak/mount-read-test"
-	writeControl(t, nsFs, "mount", "/srv/mount-read-srv "+dst+"\n")
+	writeControl(t, nsFs, "mount", "/peak/srv/mount-read-srv "+dst+"\n")
 
 	f, err := nsFs.OpenFile("mount", os.O_RDONLY, 0)
 	if err != nil {
@@ -325,7 +325,7 @@ func TestMountFileSnapshotOnOpen(t *testing.T) {
 	}
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
 	dst := "/peak/mount-snapshot-test"
-	writeControl(t, nsFs, "mount", "/srv/mount-snapshot-srv "+dst+"\n")
+	writeControl(t, nsFs, "mount", "/peak/srv/mount-snapshot-srv "+dst+"\n")
 
 	data, _ := io.ReadAll(f)
 	if strings.Contains(string(data), dst) {
@@ -945,7 +945,7 @@ func TestMountDispatchVirtualSocket(t *testing.T) {
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(serverF)
 
 	mountTarget := "/peak/test-virtual-mount"
-	if _, err := e.ninep.Mount("/srv/mounttest", mountTarget); err != nil {
+	if _, err := e.ninep.Mount("/peak/srv/mounttest", mountTarget); err != nil {
 		t.Fatalf("Mount: %v", err)
 	}
 	mp, _ := e.ninep.FindMount(mountTarget)
@@ -1020,7 +1020,7 @@ func TestSrvDirectServeConn(t *testing.T) {
 	}()
 
 	const mountPath = "/peak/direct-test"
-	if _, err := e.ninep.Mount("/srv/direct", mountPath); err != nil {
+	if _, err := e.ninep.Mount("/peak/srv/direct", mountPath); err != nil {
 		t.Fatalf("Mount: %v", err)
 	}
 
@@ -1056,7 +1056,7 @@ func TestMountAutoUnmountOnConnDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFile(/mount): %v", err)
 	}
-	if _, err := fmt.Fprintf(mountF, "/srv/drop-svc /peak/auto-unmount\n"); err != nil {
+	if _, err := fmt.Fprintf(mountF, "/peak/srv/drop-svc /peak/auto-unmount\n"); err != nil {
 		t.Fatalf("write /mount: %v", err)
 	}
 	mountF.Close()
@@ -1098,7 +1098,7 @@ func TestMountMultipleAutoUnmount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("OpenFile(/mount): %v", err)
 		}
-		fmt.Fprintf(mountF, "/srv/%s %s\n", svc, dst)
+		fmt.Fprintf(mountF, "/peak/srv/%s %s\n", svc, dst)
 		mountF.Close()
 	}
 	for _, dst := range mounts {
@@ -1141,7 +1141,7 @@ func TestSrvServeConnVia9P(t *testing.T) {
 		t.Fatalf("OpenFile(/mount): %v", err)
 	}
 	const mountPath = "/peak/p9svc-mount"
-	fmt.Fprintf(mountF, "/srv/p9svc %s\n", mountPath)
+	fmt.Fprintf(mountF, "/peak/srv/p9svc %s\n", mountPath)
 	mountF.Close()
 
 	if mp, _ := e.ninep.FindMount(mountPath); mp != mountPath {

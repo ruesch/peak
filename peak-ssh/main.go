@@ -90,7 +90,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("open /mount: %v", err)
 		}
-		fmt.Fprintf(mountF, "/srv/ssh %s\n", *mountPath)
+		fmt.Fprintf(mountF, "/peak/srv/ssh %s\n", *mountPath)
 		mountF.Close()
 		log.Printf("mounted at %s", *mountPath)
 	} else {
