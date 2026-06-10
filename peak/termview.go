@@ -95,9 +95,7 @@ func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose f
 				tv.state.Lock()
 				tv.closed = true
 				tv.state.Unlock()
-				if tv.onClose != nil {
-					tv.editor.Call(tv.onClose)
-				}
+				tv.editor.Call(tv.onClose)
 				return
 			}
 			tv.bufferDirty = true
@@ -177,11 +175,6 @@ func (tv *TermView) ShowCursor(s tcell.Screen) {
 	s.HideCursor()
 }
 
-func (tv *TermView) getContentHeight() int {
-	// Must be called with lock
-	return tv.contentHeight
-}
-
 func (tv *TermView) updateContentHeight() {
 	// Must be called with lock
 	if tv.state.Mode(terminal.ModeAltScreen) {
@@ -222,17 +215,13 @@ func (tv *TermView) Resize(x, y, w, h int) {
 		return
 	}
 	tv.x, tv.y, tv.w, tv.h = x, y, w, h
-	if tv.vt != nil {
-		// Always keep emulator at maxHistory to avoid losing Primary buffer data
-		// when switching screens or resizing.
-		tv.vt.Resize(w, max(maxHistory, h))
+	// Always keep emulator at maxHistory to avoid losing Primary buffer data
+	// when switching screens or resizing.
+	tv.vt.Resize(w, max(maxHistory, h))
 
-		// Tell the process the visible size. This must be called AFTER tv.vt.Resize
-		// to override any PTY size changes the emulator might have made.
-		if tv.session != nil {
-			tv.session.Resize(h, w)
-		}
-	}
+	// Tell the process the visible size. This must be called AFTER tv.vt.Resize
+	// to override any PTY size changes the emulator might have made.
+	tv.session.Resize(h, w)
 	// contentHeight and scroll are recomputed by Layout() on the next draw frame.
 }
 
@@ -251,7 +240,7 @@ func (tv *TermView) SyncScroll() {
 		return
 	}
 
-	eh := tv.getContentHeight()
+	eh := tv.contentHeight
 	_, cy := tv.state.Cursor()
 	tv.state.Unlock()
 
@@ -281,34 +270,9 @@ func (tv *TermView) GetScroll() (scroll, total, visible int) {
 
 	totalH := tv.h
 	if !tv.state.Mode(terminal.ModeAltScreen) {
-		totalH = tv.getContentHeight()
+		totalH = tv.contentHeight
 	}
 	return tv.scroll.Pos, max(0, totalH), tv.h
-}
-
-func (tv *TermView) LineCount() int {
-	tv.state.Lock()
-	defer tv.state.Unlock()
-	return tv.getContentHeight()
-}
-
-func (tv *TermView) GetLine(y int) []rune {
-	tv.state.Lock()
-	defer tv.state.Unlock()
-	return tv.getLine(y)
-}
-
-func (tv *TermView) getLine(y int) []rune {
-	// Must be called with lock
-	limit := max(maxHistory, tv.h)
-	if y < 0 || y >= limit {
-		return nil
-	}
-	line := make([]rune, tv.w)
-	for x := 0; x < tv.w; x++ {
-		line[x], _, _, _ = tv.state.Cell(x, y)
-	}
-	return line
 }
 
 func (tv *TermView) Search(word string) int {
@@ -316,7 +280,7 @@ func (tv *TermView) Search(word string) int {
 	if tv.selection.Active {
 		start = tv.selection.End
 	}
-	line, sel, ok := Search(tv, word, start)
+	line, sel, ok := Search(tv.GetBuffer(), word, start)
 	if ok {
 		tv.selection = sel
 		return line
@@ -334,14 +298,11 @@ func (tv *TermView) ShowLineAt(lineNum int) {
 }
 
 func (tv *TermView) GetClickWord(mx, my int) string {
-	tv.state.Lock()
-	defer tv.state.Unlock()
-
 	rx, ry := mx-tv.x, my-tv.y
 	realRY := ry + tv.scroll.Pos
 
 	if tv.selection.Contains(rx, realRY, true) {
-		return GetTextInSelection(termLineProvider{tv}, tv.selection, true)
+		return GetTextInSelection(tv.GetBuffer(), tv.selection, true)
 	}
 
 	limit := max(maxHistory, tv.h)
@@ -349,11 +310,11 @@ func (tv *TermView) GetClickWord(mx, my int) string {
 		return ""
 	}
 
+	tv.state.Lock()
 	start, end := GetWordBoundaries(rx, tv.w, func(x int) rune {
 		c, _, _, _ := tv.state.Cell(x, realRY)
 		return c
 	})
-
 	var sb strings.Builder
 	for x := start; x < end; x++ {
 		c, _, _, _ := tv.state.Cell(x, realRY)
@@ -361,6 +322,7 @@ func (tv *TermView) GetClickWord(mx, my int) string {
 			sb.WriteRune(c)
 		}
 	}
+	tv.state.Unlock()
 	return strings.TrimSpace(sb.String())
 }
 
@@ -391,7 +353,7 @@ func (tv *TermView) externalPTY() *ExternalPTY {
 func (tv *TermView) GetScrollback() string {
 	tv.state.Lock()
 	defer tv.state.Unlock()
-	n := tv.getContentHeight()
+	n := tv.contentHeight
 	var sb strings.Builder
 	buf := make([]rune, tv.w)
 	for y := 0; y < n; y++ {
@@ -412,17 +374,8 @@ func (tv *TermView) GetScrollback() string {
 	return sb.String()
 }
 
-type termLineProvider struct {
-	tv *TermView
-}
-
-func (p termLineProvider) LineCount() int       { return p.tv.getContentHeight() }
-func (p termLineProvider) GetLine(y int) []rune { return p.tv.getLine(y) }
-
 func (tv *TermView) GetSelectedText() string {
-	tv.state.Lock()
-	defer tv.state.Unlock()
-	return GetTextInSelection(termLineProvider{tv}, tv.selection, true)
+	return GetTextInSelection(tv.GetBuffer(), tv.selection, true)
 }
 
 func (tv *TermView) HandleEvent(ev tcell.Event) bool {
@@ -477,9 +430,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				return false
 			}
 		}
-		if tv.session != nil {
-			tv.session.Write([]byte(keyToEscSeq(e)))
-		}
+		tv.session.Write([]byte(keyToEscSeq(e)))
 		return false
 	case *tcell.EventMouse:
 		mx, my := e.Position()
@@ -506,9 +457,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				} else {
 					seq = seq + seq + seq
 				}
-				if tv.session != nil {
-					tv.session.Write([]byte(seq))
-				}
+				tv.session.Write([]byte(seq))
 			} else {
 				dir := -1
 				if buttons&tcell.WheelDown != 0 {
@@ -520,7 +469,7 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 			return false
 		}
 
-		if tv.session != nil && isMouseMode && !ctrlPressed && !tv.selecting {
+		if isMouseMode && !ctrlPressed && !tv.selecting {
 			motion := mx != tv.lastMX || my != tv.lastMY
 			handled := false
 			isMotion, isRelease := false, false
@@ -621,9 +570,7 @@ func (tv *TermView) encodeSGR(btn, x, y int, motion, release bool, mod tcell.Mod
 
 func (tv *TermView) Close() {
 	tv.cancel()
-	if tv.vt != nil {
-		tv.vt.Close()
-	}
+	tv.vt.Close()
 }
 
 func (tv *TermView) Snarf() {
@@ -634,7 +581,7 @@ func (tv *TermView) Snarf() {
 
 func (tv *TermView) Paste() {
 	text, _ := clipboard.ReadAll()
-	if text != "" && tv.session != nil {
+	if text != "" {
 		tv.session.Write([]byte(text))
 	}
 }

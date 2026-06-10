@@ -252,22 +252,16 @@ func parseAddrOne(s string, buf *Buffer) (int, error) {
 	}
 	// Line number (1-based) → rune offset of line start
 	n-- // convert to 0-based
-	if buf == nil {
-		return 0, nil
-	}
 	if n < 0 {
 		n = 0
 	}
-	if n >= buf.LineCount() {
-		n = buf.LineCount() - 1
+	if n >= len(buf.lines) {
+		n = len(buf.lines) - 1
 	}
 	return buf.RuneOffsetOfPos(n, 0), nil
 }
 
 func clampAddr(q int, buf *Buffer) int {
-	if buf == nil {
-		return 0
-	}
 	n := buf.Len()
 	if q < 0 {
 		return 0
@@ -324,17 +318,12 @@ func (f *winDataFile) Close() error {
 		return nil
 	}
 	runes := []rune(string(f.writes))
-	var modified bool
 	f.win.lk.Lock()
-	if buf := f.win.body.GetBuffer(); buf != nil {
-		buf.ReplaceRangeRunes(f.win.addrQ0, f.win.addrQ1, runes)
-		f.win.addrQ1 = f.win.addrQ0 + len(runes)
-		modified = true
-	}
+	buf := f.win.body.GetBuffer()
+	buf.ReplaceRangeRunes(f.win.addrQ0, f.win.addrQ1, runes)
+	f.win.addrQ1 = f.win.addrQ0 + len(runes)
 	f.win.lk.Unlock()
-	if modified {
-		f.win.editor.Redraw()
-	}
+	f.win.editor.Redraw()
 	return nil
 }
 

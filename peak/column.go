@@ -15,8 +15,7 @@ type Gutter struct {
 	theme *Theme
 }
 
-func (g *Gutter) Layout()                 {}
-func (g *Gutter) ShowCursor(tcell.Screen) {}
+func (g *Gutter) Layout() {}
 func (g *Gutter) Draw(s tcell.Screen) {
 	sepStyle := tcell.StyleDefault.Background(g.theme.ScrollGutter).Foreground(g.theme.HandleColumn)
 	handleStyle := tcell.StyleDefault.Background(g.theme.HandleColumn).Foreground(tcell.ColorBlack)
@@ -28,7 +27,7 @@ func (g *Gutter) Draw(s tcell.Screen) {
 		s.SetContent(g.x, y, ' ', nil, style)
 	}
 }
-func (g *Gutter) Resize(x, y, w, h int) { g.SetPos(x, y, w, h) }
+func (g *Gutter) Resize(x, y, w, h int) { g.x, g.y, g.w, g.h = x, y, w, h }
 
 type Column struct {
 	TreeNode
@@ -46,7 +45,6 @@ func (c *Column) Layout() {}
 
 func (c *Column) PreferredSize() int { return c.explicitWidth }
 func (c *Column) MinSize() int       { return 5 }
-func (c *Column) SetExplicit(v int)  { c.explicitWidth = v }
 
 func (c *Column) WalkLayout() {
 	c.syncChildren()
@@ -65,8 +63,6 @@ func (c *Column) Draw(s tcell.Screen) {
 		}
 	}
 }
-
-func (c *Column) ShowCursor(tcell.Screen) {}
 
 func (c *Column) syncChildren() {
 	c.children = []DrawNode{c.gutter, c.tag}
@@ -144,7 +140,7 @@ func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 		} else {
 			name = filepath.Base(strings.Fields(cmd)[0])
 		}
-		tagText = " " + join(dir, "-"+name) + " Zerox Del "
+		tagText = " " + filepath.Join(dir, "-"+name) + " Zerox Del "
 	}
 
 	c.maximized = nil
@@ -173,7 +169,7 @@ func (c *Column) AddSessionTermWindow(title string, sess session.Session) (*Wind
 }
 
 func (c *Column) Resize(x, y, w, h int) {
-	c.SetPos(x, y, w, h)
+	c.x, c.y, c.w, c.h = x, y, w, h
 	c.gutter.Resize(x, y, 1, h)
 	c.tag.Resize(x+1, y, w-1, 1)
 	if len(c.windows) == 0 {

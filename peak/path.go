@@ -14,10 +14,7 @@ import (
 )
 
 func getVFS() afero.Fs {
-	if appEditor != nil && appEditor.ninep != nil {
-		return appEditor.ninep.vfs
-	}
-	return afero.NewOsFs()
+	return appEditor.ninep.vfs
 }
 
 // toDir ensures a directory path ends with a trailing slash.
@@ -198,29 +195,22 @@ func listDir(path string) (string, error) {
 	return strings.Join(names, "\n"), nil
 }
 
-func join(elem ...string) string {
-	return filepath.Join(elem...)
-}
-
 // runCommand runs a command with sh -c and returns the output and error.
 func runCommand(cmd, path, input string, winid int) (string, error) {
-	if appEditor != nil && appEditor.ninep != nil {
-		ninep := appEditor.ninep
-		dir := getPathDir(path)
-		if mountPath, mountFs := ninep.FindMount(dir); mountPath != "" {
-			relPath, _ := filepath.Rel(mountPath, dir)
-			if runF, err := mountFs.OpenFile("run", os.O_RDWR, 0); err == nil {
-				out, rerr := remoteRun(runF, toDir(relPath), cmd)
-				runF.Close()
-				return out, rerr
-			}
+	ninep := appEditor.ninep
+	dir := getPathDir(path)
+	if mountPath, mountFs := ninep.FindMount(dir); mountPath != "" {
+		relPath, _ := filepath.Rel(mountPath, dir)
+		if runF, err := mountFs.OpenFile("run", os.O_RDWR, 0); err == nil {
+			out, rerr := remoteRun(runF, toDir(relPath), cmd)
+			runF.Close()
+			return out, rerr
 		}
-		if localDir, ok := ninep.ResolveLocalPath(dir); ok {
-			return runLocalCommand(cmd, path, localDir, input, winid)
-		}
-		return "", fmt.Errorf("%s: don't know how to run command", path)
 	}
-	return runLocalCommand(cmd, path, getPathDir(path), input, winid)
+	if localDir, ok := ninep.ResolveLocalPath(dir); ok {
+		return runLocalCommand(cmd, path, localDir, input, winid)
+	}
+	return "", fmt.Errorf("%s: don't know how to run command", path)
 }
 
 func remoteRun(f afero.File, relPath, cmd string) (string, error) {

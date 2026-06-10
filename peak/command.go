@@ -139,21 +139,15 @@ func (e *Editor) getArgs(win *Window, cmd string) []string {
 	}
 
 	// Fallback to selection if no arguments provided in the command line
-	var sel string
-	if e.focusedView != nil {
-		sel = e.focusedView.GetSelectedText()
-	}
-
+	sel := e.focusedView.GetSelectedText()
 	if sel == "" {
 		target := win
 		if target == nil {
 			target = e.active
 		}
 		if target != nil {
-			if target.body != nil {
-				sel = target.body.GetSelectedText()
-			}
-			if sel == "" && target.tag != nil {
+			sel = target.body.GetSelectedText()
+			if sel == "" {
 				sel = target.tag.GetSelectedText()
 			}
 		}
@@ -217,10 +211,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 		content, isDir, writable, err := readFileOrDir(full)
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			if err == nil {
-				target := e.getTargetColumn(nil, win)
-				if target != nil {
-					e.createWindow(target, full, content, isDir, writable, line, col)
-				}
+				e.createWindow(e.getTargetColumn(nil, win), full, content, isDir, writable, line, col)
 			} else {
 				if binaryFallback != nil && err.Error() == "binary file" {
 					binaryFallback()
@@ -243,14 +234,10 @@ func (e *Editor) createWindow(target *Column, full string, content string, isDir
 		newWin.kind = WinFile
 		newWin.writable = writable
 	}
-	if tv := newWin.bodyTextView(); tv != nil {
-		newWin.savedVersion = tv.buffer.version
-	}
+	newWin.savedVersion = newWin.bodyTextView().buffer.version
 	target.Resize(target.x, target.y, target.w, target.h)
 	if line >= 0 {
-		if tv := newWin.bodyTextView(); tv != nil {
-			tv.GotoLineCol(line, col)
-		}
+		newWin.bodyTextView().GotoLineCol(line, col)
 	}
 	return newWin
 }
@@ -284,9 +271,6 @@ func (e *Editor) getTargetColumn(col *Column, win *Window) *Column {
 }
 
 func normalizeError(err error) string {
-	if err == nil {
-		return ""
-	}
 	if os.IsNotExist(err) {
 		return "No such file or directory"
 	}
@@ -443,7 +427,7 @@ func (e *Editor) cmdNewCol() {
 	nc := NewColumn(e.w, 1, 0, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, nc)
 	e.createWindow(nc, "./untitled.txt", "", false, true, -1, 0)
-	e.Resize()
+	e.resize()
 }
 
 func (e *Editor) cmdNew(col *Column, win *Window, cmd string) {
@@ -453,21 +437,14 @@ func (e *Editor) cmdNew(col *Column, win *Window, cmd string) {
 		return
 	}
 
-	targetCol := e.getTargetColumn(col, win)
-	if targetCol != nil {
-		e.createWindow(targetCol, "./untitled.txt", "", false, true, -1, 0)
-	}
+	e.createWindow(e.getTargetColumn(col, win), "./untitled.txt", "", false, true, -1, 0)
 }
 
 func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 	arg := e.getArg(win, cmd)
 	win = e.getTargetWindow(win)
 	targetCol := e.getTargetColumn(col, win)
-	if targetCol == nil {
-		return
-	}
-
-	if e.ninep != nil && win != nil {
+	if win != nil {
 		winPath := win.GetFilename()
 		if mountPath, mountFs := e.ninep.FindMount(winPath); mountPath != "" {
 			dir := getPathDir(winPath)
@@ -499,13 +476,11 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 	} else {
 		dir = getwd()
 	}
-	if e.ninep != nil {
-		if localDir, ok := e.ninep.ResolveLocalPath(dir); ok {
-			dir = localDir
-		} else {
-			e.showError(targetCol, win, "", dir+": don't know how to open terminal window")
-			return
-		}
+	if localDir, ok := e.ninep.ResolveLocalPath(dir); ok {
+		dir = localDir
+	} else {
+		e.showError(targetCol, win, "", dir+": don't know how to open terminal window")
+		return
 	}
 	newWin, err := targetCol.AddTermWindow("", arg, dir)
 	if err != nil {
@@ -547,7 +522,7 @@ func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath,
 	}
 
 	sess := session.NewRemote(ioRead, ioWrite, ctlF)
-	title := join(dir, "-"+filepath.Base(mountPath))
+	title := filepath.Join(dir, "-"+filepath.Base(mountPath))
 
 	reply := make(chan error, 1)
 	e.screen.PostEvent(tcell.NewEventInterrupt(func() {
@@ -574,10 +549,8 @@ func (e *Editor) cmdZerox(col *Column, win *Window) {
 	if tv := target.bodyTextView(); tv != nil {
 		newWin := target.parent.AddWindow(target.tag.buffer.GetText(), tv.buffer.GetText())
 		newTv := newWin.bodyTextView()
-		if newTv != nil {
-			newTv.scroll.Pos = tv.scroll.Pos
-			newTv.buffer.cursor = tv.buffer.cursor
-		}
+		newTv.scroll.Pos = tv.scroll.Pos
+		newTv.buffer.cursor = tv.buffer.cursor
 		newWin.kind = target.kind
 		newWin.writable = target.writable
 		newWin.savedVersion = target.savedVersion
@@ -589,33 +562,13 @@ func (e *Editor) cmdZerox(col *Column, win *Window) {
 	}
 }
 
-func (e *Editor) cmdSnarf() {
-	if e.focusedView != nil {
-		if buf := e.focusedView.GetBuffer(); buf != nil {
-			buf.Snarf()
-		}
-	}
-}
-
-func (e *Editor) cmdCut() {
-	if e.focusedView != nil {
-		if buf := e.focusedView.GetBuffer(); buf != nil {
-			buf.Cut()
-		}
-	}
-}
-
-func (e *Editor) cmdPaste() {
-	if e.focusedView != nil {
-		if buf := e.focusedView.GetBuffer(); buf != nil {
-			buf.Paste()
-		}
-	}
-}
+func (e *Editor) cmdSnarf() { e.focusedView.GetBuffer().Snarf() }
+func (e *Editor) cmdCut()   { e.focusedView.GetBuffer().Cut() }
+func (e *Editor) cmdPaste() { e.focusedView.GetBuffer().Paste() }
 
 func (e *Editor) cmdSort(col *Column, win *Window) {
 	targetCol := e.getTargetColumn(col, win)
-	if targetCol == nil || len(targetCol.windows) <= 1 {
+	if len(targetCol.windows) <= 1 {
 		return
 	}
 
@@ -682,11 +635,9 @@ func (e *Editor) cmdLook(win *Window, cmd string) {
 		return
 	}
 
-	if target.body != nil {
-		foundLine := target.body.Search(arg)
-		if foundLine != -1 {
-			target.body.ShowLineAt(foundLine)
-		}
+	foundLine := target.body.Search(arg)
+	if foundLine != -1 {
+		target.body.ShowLineAt(foundLine)
 	}
 }
 
@@ -709,10 +660,6 @@ func (e *Editor) cmdEdit(col *Column, win *Window, cmd string) {
 	}
 
 	buf := target.body.GetBuffer()
-	if buf == nil {
-		return
-	}
-
 	dot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
 	if buf.selection.Active {
 		s, end := buf.selection.Ordered()
@@ -762,7 +709,7 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 			dir = getwd()
 		}
 	}
-	errName := join(dir, "+Errors")
+	errName := filepath.Join(dir, "+Errors")
 
 	for _, c := range e.columns {
 		for _, w := range c.windows {
@@ -773,9 +720,6 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 	}
 
 	targetCol := e.getTargetColumn(col, win)
-	if targetCol == nil {
-		return nil
-	}
 	newWin := targetCol.AddWindow(" "+errName+" Get Del ", "")
 	newWin.kind = WinOut
 	e.ActivateWindow(newWin)
@@ -784,29 +728,19 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 }
 
 func (e *Editor) appendToErrorWindow(col *Column, win *Window, msg string) {
-	errWin := e.findOrCreateErrorWindow(col, win, "")
-	if errWin == nil {
-		return
+	tv := e.findOrCreateErrorWindow(col, win, "").bodyTextView()
+	existing := tv.buffer.GetText()
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
 	}
-	if tv := errWin.bodyTextView(); tv != nil {
-		existing := tv.buffer.GetText()
-		if existing != "" && !strings.HasSuffix(existing, "\n") {
-			existing += "\n"
-		}
-		tv.buffer.SetText(existing + msg)
-		e.focusedView = tv
-	}
+	tv.buffer.SetText(existing + msg)
+	e.focusedView = tv
 }
 
 func (e *Editor) showError(col *Column, win *Window, dir, msg string) {
-	errWin := e.findOrCreateErrorWindow(col, win, dir)
-	if errWin == nil {
-		return
-	}
-	if tv := errWin.bodyTextView(); tv != nil {
-		tv.buffer.SetText(msg)
-		e.focusedView = tv
-	}
+	tv := e.findOrCreateErrorWindow(col, win, dir).bodyTextView()
+	tv.buffer.SetText(msg)
+	e.focusedView = tv
 }
 
 func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
@@ -835,15 +769,14 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 	var input string
 	var selStart, selEnd Cursor
 	if win != nil {
-		if buf := win.body.GetBuffer(); buf != nil {
-			if buf.selection.Active {
-				selStart, selEnd = buf.selection.Ordered()
-			} else {
-				selStart, selEnd = buf.cursor, buf.cursor
-			}
-			if pipechar == '>' || pipechar == '|' {
-				input = buf.GetSelectedText()
-			}
+		buf := win.body.GetBuffer()
+		if buf.selection.Active {
+			selStart, selEnd = buf.selection.Ordered()
+		} else {
+			selStart, selEnd = buf.cursor, buf.cursor
+		}
+		if pipechar == '>' || pipechar == '|' {
+			input = buf.GetSelectedText()
 		}
 	}
 
@@ -851,11 +784,10 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 		out, err := runCommand(cmd, filename, input, winid)
 		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 			if (pipechar == '<' || pipechar == '|') && win != nil {
-				if buf := win.body.GetBuffer(); buf != nil {
-					newCursor := buf.SetTextInRange(selStart, selEnd, out)
-					buf.cursor = newCursor
-					buf.ClearSelection()
-				}
+				buf := win.body.GetBuffer()
+				newCursor := buf.SetTextInRange(selStart, selEnd, out)
+				buf.cursor = newCursor
+				buf.ClearSelection()
 				if err != nil {
 					e.showError(col, win, getPathDir(filename), err.Error())
 				}
@@ -877,11 +809,8 @@ func (e *Editor) RemoveColumn(c *Column) {
 		e.RemoveWindow(c.windows[0])
 	}
 	i := slices.Index(e.columns, c)
-	if i < 0 {
-		return
-	}
 	e.columns = slices.Delete(e.columns, i, i+1)
-	e.Resize()
+	e.resize()
 	if len(e.columns) == 0 {
 		e.active, e.focusedView = nil, e.tag
 		return

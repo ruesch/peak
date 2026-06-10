@@ -188,12 +188,12 @@ func TestIsSelectedUTF8(t *testing.T) {
 	outside := []int{0, 3, 4}
 
 	for _, x := range inside {
-		if !b.IsSelected(x, 0) {
+		if !b.selection.Contains(x, 0, false) {
 			t.Errorf("IsSelected(%d, 0) = false, want true", x)
 		}
 	}
 	for _, x := range outside {
-		if b.IsSelected(x, 0) {
+		if b.selection.Contains(x, 0, false) {
 			t.Errorf("IsSelected(%d, 0) = true, want false", x)
 		}
 	}
@@ -354,31 +354,31 @@ func TestIsSelectedUTF8MultiLineBoundaries(t *testing.T) {
 	b.SetSelection(Cursor{2, 0}, Cursor{2, 2})
 
 	// Line 0 (start line): col 1 not selected, col 2 and 3 selected.
-	if b.IsSelected(1, 0) {
+	if b.selection.Contains(1, 0, false) {
 		t.Error("line 0 col 1 should not be selected")
 	}
-	if !b.IsSelected(2, 0) {
+	if !b.selection.Contains(2, 0, false) {
 		t.Error("line 0 col 2 should be selected")
 	}
-	if !b.IsSelected(3, 0) {
+	if !b.selection.Contains(3, 0, false) {
 		t.Error("line 0 col 3 should be selected")
 	}
 
 	// Line 1 (middle): every column is selected.
 	for x := 0; x <= 4; x++ {
-		if !b.IsSelected(x, 1) {
+		if !b.selection.Contains(x, 1, false) {
 			t.Errorf("line 1 col %d should be selected (middle line)", x)
 		}
 	}
 
 	// Line 2 (end line): col 0 and 1 selected, col 2 not.
-	if !b.IsSelected(0, 2) {
+	if !b.selection.Contains(0, 2, false) {
 		t.Error("line 2 col 0 should be selected")
 	}
-	if !b.IsSelected(1, 2) {
+	if !b.selection.Contains(1, 2, false) {
 		t.Error("line 2 col 1 should be selected")
 	}
-	if b.IsSelected(2, 2) {
+	if b.selection.Contains(2, 2, false) {
 		t.Error("line 2 col 2 should not be selected (exclusive end)")
 	}
 }
@@ -656,12 +656,12 @@ func TestSearchMixedThenIsSelected(t *testing.T) {
 	selected := []int{2, 3, 4}
 
 	for _, x := range notSelected {
-		if b.IsSelected(x, 0) {
+		if b.selection.Contains(x, 0, false) {
 			t.Errorf("rune %d should NOT be selected after Search('abc')", x)
 		}
 	}
 	for _, x := range selected {
-		if !b.IsSelected(x, 0) {
+		if !b.selection.Contains(x, 0, false) {
 			t.Errorf("rune %d should be selected after Search('abc')", x)
 		}
 	}

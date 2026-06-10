@@ -6,14 +6,11 @@ type DrawNode interface {
 	Layout()
 	Draw(tcell.Screen)
 	Resize(x, y, w, h int)
-	ShowCursor(tcell.Screen)
-	GetBounds() (x, y, w, h int)
 }
 
 type Sizer interface {
 	PreferredSize() int
 	MinSize() int
-	SetExplicit(int)
 }
 
 type TreeNode struct {
@@ -21,12 +18,6 @@ type TreeNode struct {
 	children []DrawNode
 	lastSize int
 }
-
-func (n *TreeNode) Children() []DrawNode { return n.children }
-
-func (n *TreeNode) AddChild(c ...DrawNode) { n.children = append(n.children, c...) }
-
-func (n *TreeNode) ClearChildren() { n.children = n.children[:0] }
 
 func (n *TreeNode) WalkLayout() {
 	for _, c := range n.children {

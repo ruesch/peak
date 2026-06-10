@@ -36,8 +36,6 @@ type View interface {
 	ShowCursor(tcell.Screen)
 	Resize(x, y, w, h int)
 	HandleEvent(tcell.Event) bool
-	GetPos() (x, y, w, h int)
-	SetPos(x, y, w, h int)
 	GetClickWord(mx, my int) string
 	GetSelectedText() string
 	GetBuffer() *Buffer
@@ -219,10 +217,7 @@ func (tv *TextView) visualToBuffer(vx, vidx int) (int, int) {
 }
 
 func (tv *TextView) Draw(s tcell.Screen) {
-	selStyle := tcell.StyleDefault.Background(tcell.ColorSilver).Foreground(tcell.ColorBlack)
-	if tv.theme != nil {
-		selStyle = tcell.StyleDefault.Background(tv.theme.SelectionBG).Foreground(tv.theme.SelectionFG)
-	}
+	selStyle := tcell.StyleDefault.Background(tv.theme.SelectionBG).Foreground(tv.theme.SelectionFG)
 
 	vrow := 0
 	for lidx := tv.scroll.Pos; lidx < len(tv.layout) && vrow < tv.h; lidx++ {
@@ -238,7 +233,7 @@ func (tv *TextView) Draw(s tcell.Screen) {
 		}
 		for idx := vl.Start; idx < vl.End && vcol < tv.w; idx++ {
 			r, style := line[idx], lineStyle
-			if tv.buffer.IsSelected(idx, vl.BufferLine) {
+			if tv.buffer.selection.Contains(idx, vl.BufferLine, false) {
 				style = selStyle
 			} else if tv.colorAt != nil {
 				if c, ok := tv.colorAt(lineRuneBase + idx - vl.Start); ok {
@@ -264,7 +259,7 @@ func (tv *TextView) Draw(s tcell.Screen) {
 		}
 		for ; vcol < tv.w; vcol++ {
 			style := lineStyle
-			if tv.buffer.IsSelected(vl.End, vl.BufferLine) {
+			if tv.buffer.selection.Contains(vl.End, vl.BufferLine, false) {
 				style = selStyle
 			}
 			s.SetContent(tv.x+vcol, tv.y+vrow, ' ', nil, style)
@@ -280,7 +275,7 @@ func (tv *TextView) Draw(s tcell.Screen) {
 
 func (tv *TextView) GetClickWord(mx, my int) string {
 	bx, by := tv.visualToBuffer(mx-tv.x, my-tv.y+tv.scroll.Pos)
-	if tv.buffer.IsSelected(bx, by) {
+	if tv.buffer.selection.Contains(bx, by, false) {
 		word := strings.TrimSpace(tv.buffer.GetSelectedText())
 		if word != "" {
 			return word
@@ -368,8 +363,8 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 			tv.buffer.Redo()
 		case tcell.KeyCtrlA:
 			tv.typingStart = nil
-			lc := tv.buffer.LineCount()
-			tv.buffer.SetSelection(Cursor{0, 0}, Cursor{len(tv.buffer.GetLine(lc - 1)), lc - 1})
+			last := len(tv.buffer.lines) - 1
+			tv.buffer.SetSelection(Cursor{0, 0}, Cursor{len(tv.buffer.lines[last]), last})
 		case tcell.KeyCtrlC:
 			tv.buffer.Snarf()
 		case tcell.KeyCtrlX:
@@ -541,19 +536,8 @@ func (tv *TextView) SyncScroll() {
 	tv.scroll.Clamp(len(tv.layout), tv.h)
 }
 
-func (tv *TextView) LineCount() int {
-	return len(tv.buffer.lines)
-}
-
-func (tv *TextView) GetLine(y int) []rune {
-	if y < 0 || y >= len(tv.buffer.lines) {
-		return nil
-	}
-	return tv.buffer.lines[y]
-}
-
 func (tv *TextView) Search(word string) int {
-	line, sel, ok := Search(tv, word, tv.buffer.cursor)
+	line, sel, ok := Search(tv.buffer, word, tv.buffer.cursor)
 	if ok {
 		tv.buffer.cursor = sel.End
 		tv.buffer.selection = sel
@@ -585,15 +569,13 @@ type Handle struct {
 	color tcell.Color
 }
 
-func (hd *Handle) Layout()                 {}
-func (hd *Handle) ShowCursor(tcell.Screen) {}
 func (hd *Handle) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(hd.color).Foreground(tcell.ColorBlack)
 	for i := 0; i < hd.h; i++ {
 		s.SetContent(hd.x, hd.y+i, ' ', nil, style)
 	}
 }
-func (hd *Handle) Resize(x, y, w, h int) { hd.SetPos(x, y, w, h) }
+func (hd *Handle) Resize(x, y, w, h int) { hd.x, hd.y, hd.w, hd.h = x, y, w, h }
 
 type Scrollbar struct {
 	BaseView
@@ -603,8 +585,6 @@ type Scrollbar struct {
 	visibleLines int
 }
 
-func (sb *Scrollbar) Layout()                 {}
-func (sb *Scrollbar) ShowCursor(tcell.Screen) {}
 func (sb *Scrollbar) Draw(s tcell.Screen) {
 	if sb.visibleLines == 0 || sb.totalLines <= sb.visibleLines {
 		return
@@ -615,10 +595,7 @@ func (sb *Scrollbar) Draw(s tcell.Screen) {
 		s.SetContent(sb.x, sb.y+thumbStart+i, ' ', nil, sb.thumbStyle())
 	}
 }
-func (sb *Scrollbar) Set(scroll, total, visible int) {
-	sb.scrollPos, sb.totalLines, sb.visibleLines = scroll, total, visible
-}
-func (sb *Scrollbar) Resize(x, y, w, h int) { sb.SetPos(x, y, w, h) }
+func (sb *Scrollbar) Resize(x, y, w, h int) { sb.x, sb.y, sb.w, sb.h = x, y, w, h }
 
 type BodyView struct {
 	TreeNode
@@ -626,19 +603,10 @@ type BodyView struct {
 	scroll  *Scrollbar
 }
 
-func (bv *BodyView) Layout()                   {}
-func (bv *BodyView) Draw(tcell.Screen)         {}
-func (bv *BodyView) ShowCursor(s tcell.Screen) { bv.content.ShowCursor(s) }
 func (bv *BodyView) Resize(x, y, w, h int) {
-	bv.SetPos(x, y, w, h)
+	bv.x, bv.y, bv.w, bv.h = x, y, w, h
 	bv.scroll.Resize(x, y, 1, h)
 	bv.content.Resize(x+1, y, w-1, h)
-}
-
-func (bv *BodyView) syncChildren() {
-	if dn, ok := bv.content.(DrawNode); ok {
-		bv.children = []DrawNode{bv.scroll, dn}
-	}
 }
 
 type Window struct {
@@ -668,20 +636,10 @@ type Window struct {
 	mutSeq, bodySnapSeq uint64
 }
 
-func (w *Window) Layout()                 {}
-func (w *Window) Draw(tcell.Screen)       {}
-func (w *Window) ShowCursor(tcell.Screen) {}
-func (w *Window) PreferredSize() int      { return w.explicitHeight }
-func (w *Window) MinSize() int            { return w.tagHeight() }
-func (w *Window) SetExplicit(v int)       { w.explicitHeight = v }
-
-func (w *Window) syncChildren() {
-	w.children = []DrawNode{w.handle, w.tag, w.bodyView}
-}
-
-func (w *Window) WalkLayout() {
-	w.syncChildren()
-}
+func (w *Window) Layout()            {}
+func (w *Window) Draw(tcell.Screen)  {}
+func (w *Window) PreferredSize() int { return w.explicitHeight }
+func (w *Window) MinSize() int       { return w.tagHeight() }
 
 func (w *Window) WalkDraw(s tcell.Screen) {
 	w.tag.underlineLast = w.editor.active == w
@@ -719,8 +677,8 @@ func (w *Window) WalkDraw(s tcell.Screen) {
 
 	w.lk.Lock()
 	w.body.Layout()
-	scroll, total, visible := w.body.GetScroll()
-	w.bodyView.scroll.Set(scroll, total, visible)
+	sb := w.bodyView.scroll
+	sb.scrollPos, sb.totalLines, sb.visibleLines = w.body.GetScroll()
 	w.bodyView.scroll.Draw(s)
 	w.body.Draw(s)
 	w.lk.Unlock()
@@ -743,14 +701,6 @@ func (win *Window) unsubscribeEvent(sub *eventSub) {
 		}
 	}
 	win.lk.Unlock()
-}
-
-// hasEventSubs is safe to call from any goroutine.
-func (win *Window) hasEventSubs() bool {
-	win.lk.Lock()
-	n := len(win.eventSubs)
-	win.lk.Unlock()
-	return n > 0
 }
 
 // broadcastEvent delivers a counted event record to all open event file subscribers.
@@ -916,29 +866,18 @@ func (win *Window) IsDirty() bool {
 	if win.kind != WinFile || !win.writable {
 		return false
 	}
-	if buf := win.body.GetBuffer(); buf != nil {
-		return buf.version != win.savedVersion
-	}
-	return false
+	return win.body.GetBuffer().version != win.savedVersion
 }
 
 func (win *Window) Warned() bool {
-	if buf := win.body.GetBuffer(); buf != nil {
-		return win.warnedVersion == buf.version
-	}
-	return true
+	return win.warnedVersion == win.body.GetBuffer().version
 }
 
 func (win *Window) Warn() {
-	if buf := win.body.GetBuffer(); buf != nil {
-		win.warnedVersion = buf.version
-	}
+	win.warnedVersion = win.body.GetBuffer().version
 }
 
 func (win *Window) GetFilename() string {
-	if len(win.tag.buffer.lines) == 0 {
-		return ""
-	}
 	fields := strings.Fields(string(win.tag.buffer.lines[0]))
 	if len(fields) > 0 {
 		return fields[0]
@@ -1001,7 +940,7 @@ func (win *Window) reflow() {
 }
 
 func (win *Window) Resize(x, y, w, h int) {
-	win.SetPos(x, y, w, h)
+	win.x, win.y, win.w, win.h = x, y, w, h
 	win.reflow()
 }
 
@@ -1069,7 +1008,7 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 		return false
 	}
 	if btns&tcell.Button3 != 0 {
-		return win.onExec != nil && win.onExec(win.parent, win, word)
+		return win.onExec(win.parent, win, word)
 	}
 	return win.editor.Plumb(win, word)
 }

@@ -80,9 +80,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 		for req := range e.execCh {
 			switch req.kind {
 			case 'x':
-				if req.win != nil && req.win.onExec != nil {
-					req.win.onExec(req.col, req.win, req.text)
-				}
+				req.win.onExec(req.col, req.win, req.text)
 			case 'l':
 				e.Plumb(req.win, req.text)
 			case 'e':
@@ -99,6 +97,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 		return tcell.StyleDefault.Background(e.theme.GlobalTagBG).Foreground(e.theme.GlobalTagFG)
 	}
 	e.tag.theme = &e.theme
+	e.focusedView = e.tag
 	return e, s
 }
 
@@ -185,7 +184,7 @@ func TestNewColClick(t *testing.T) {
 	colRight := NewColumn(leftWidth, 1, e.w-leftWidth, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, colRight)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -227,7 +226,7 @@ func TestHelpClick(t *testing.T) {
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -267,7 +266,7 @@ func TestDelColClick(t *testing.T) {
 		e.columns = append(e.columns, col)
 	}
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -307,7 +306,7 @@ func TestZeroxClick(t *testing.T) {
 	win := col.AddWindow(" test.txt Zerox ", "Hello Zerox")
 	e.ActivateWindow(win)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -345,7 +344,7 @@ func TestGetDirClick(t *testing.T) {
 	win := col.AddWindow(" /peak/doc Get Put ", "")
 	e.ActivateWindow(win)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -447,7 +446,7 @@ func TestDragWindow(t *testing.T) {
 	w3 := e.columns[1].AddWindow(" w3 ", "content 3")
 	// Col 2: 0 windows
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -521,7 +520,7 @@ func TestDragWindowInternal(t *testing.T) {
 	w2 := col.AddWindow(" w2 ", "c2")
 	w3 := col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -568,7 +567,7 @@ func TestWindowSwapAllDirections(t *testing.T) {
 		w1 := col.AddWindow(" w1 ", "c1")
 		w2 := col.AddWindow(" w2 ", "c2")
 		w3 := col.AddWindow(" w3 ", "c3")
-		e.Resize()
+		e.resize()
 		e.Draw()
 		return e, col, w1, w2, w3
 	}
@@ -670,7 +669,7 @@ func TestColumnSwapAllDirections(t *testing.T) {
 		c3 := NewColumn(2*colW, 1, e.w-2*colW, e.h-1, e, e.Execute)
 		c3.explicitWidth = e.w - 2*colW
 		e.columns = append(e.columns, c1, c2, c3)
-		e.Resize()
+		e.resize()
 		e.Draw()
 		return e, c1, c2, c3
 	}
@@ -765,7 +764,7 @@ func TestSimpleEdit(t *testing.T) {
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -877,14 +876,14 @@ func TestExternalCommand(t *testing.T) {
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
 	// 1. Create window and add "uname -a" to tag
 	win := col.AddWindow(" /tmp/test.txt Get Put uname -a Del ", "initial body")
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -944,7 +943,7 @@ func TestExternalCommand(t *testing.T) {
 	errWin.body.GetBuffer().SetSelection(bstart, bend)
 
 	// 8. Run it (middle click)
-	_, errY, _, _ := errWin.body.GetPos()
+	errY := errWin.bodyTextView().y
 	bx, by, bfound := GetWordCoordinate(s, "uname -a", 0, errY)
 	if !bfound {
 		t.Fatal("Could not find 'uname -a' in +Errors body")
@@ -964,7 +963,7 @@ func TestSimplePlumb(t *testing.T) {
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1022,7 +1021,7 @@ func TestSimplePlumb(t *testing.T) {
 	// 3. Find 2.txt in the body and right-click it
 	e.Draw()
 	s.Show()
-	_, bodyY, _, _ := dirWin.body.GetPos()
+	bodyY := dirWin.bodyTextView().y
 	fx, fy, ffound := GetWordCoordinate(s, "2.txt", 0, bodyY)
 	if !ffound {
 		t.Fatal("Could not find '2.txt' in directory listing")
@@ -1051,7 +1050,7 @@ func TestPlumbLineCol(t *testing.T) {
 	e, s := setupTest(t, 100, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1323,7 +1322,7 @@ func TestTextViewWheelScrollPreservedAcrossDraws(t *testing.T) {
 	}
 	body := strings.Join(lines, "\n")
 	win := col.AddWindow(" /test ", body)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1360,7 +1359,7 @@ func TestDragWindowBetweenColumns(t *testing.T) {
 	w2 := col1.AddWindow(" w2 ", "right")
 	_ = w1
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1409,7 +1408,7 @@ func TestColumnDragPreservesBackground(t *testing.T) {
 
 	col1.AddWindow(" win ", "hello")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1449,7 +1448,7 @@ func TestDelcolLeavesBlank(t *testing.T) {
 	e.columns = append(e.columns, col)
 	col.AddWindow(" win ", "content")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1496,7 +1495,7 @@ func TestDelcolNarrowNoExtraTagRow(t *testing.T) {
 	w := col1.AddWindow("", "")
 	e.ActivateWindow(w)
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1511,7 +1510,7 @@ func TestDelcolNarrowNoExtraTagRow(t *testing.T) {
 		t.Fatalf("expected 1 column after RemoveColumn, got %d", len(e.columns))
 	}
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Handle must be exactly 1 pixel high (tag un-wrapped to one line).
@@ -1542,11 +1541,12 @@ func TestDragSelectAtBottomEdgeSetsScrollWin(t *testing.T) {
 	}
 	win := col.AddWindow(" test ", strings.Join(lines, "\n"))
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
-	bodyX, bodyY, _, bodyH := win.body.GetPos()
+	tv := win.bodyTextView()
+	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Press in the middle of the body to start a drag.
 	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH/2, tcell.Button1, 0))
@@ -1580,12 +1580,12 @@ func TestDragSelectTickExtendsSelection(t *testing.T) {
 	}
 	win := col.AddWindow(" test ", strings.Join(lines, "\n"))
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
 	tv := win.bodyTextView()
-	bodyX, bodyY, _, bodyH := win.body.GetPos()
+	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Start drag and drag to bottom edge (sets scrollWin + dir=1).
 	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.Button1, 0))
@@ -1624,7 +1624,7 @@ func TestDragSelectInTagDoesNotScrollBody(t *testing.T) {
 	}
 	win := col.AddWindow(" test Put Del ", strings.Join(lines, "\n"))
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
@@ -1708,12 +1708,12 @@ func TestDragSelectStopsAtLastLine(t *testing.T) {
 	// 3 lines fit exactly in a small body — leave room for tag row.
 	win := col.AddWindow(" test ", "a\nb\nc")
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	e.Draw()
 	s.Show()
 
 	tv := win.bodyTextView()
-	bodyX, bodyY, _, bodyH := win.body.GetPos()
+	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Drag to the bottom edge to arm the scroll timer.
 	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.Button1, 0))
@@ -1769,7 +1769,7 @@ func TestHandleButton1GrowsModerate(t *testing.T) {
 	w2 := col.AddWindow(" w2 ", "c2")
 	col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	before := w2.h
@@ -1810,7 +1810,7 @@ func TestHandleButton2Maximizes(t *testing.T) {
 	col.AddWindow(" w2 ", "c2")
 	w3 := col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Static Button2 click on w3's handle (last window, below others).
@@ -1854,7 +1854,7 @@ func TestHandleButton3GrowsExitsMaximize(t *testing.T) {
 	w2 := col.AddWindow(" w2 ", "c2")
 	col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Maximize w2 first.
@@ -1903,7 +1903,7 @@ func TestHandleButton2DragMovesWindow(t *testing.T) {
 	w2 := col.AddWindow(" w2 ", "c2")
 	w3 := col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Button2 press on w2's handle.
@@ -1943,7 +1943,7 @@ func TestHandleButton3DragMovesWindow(t *testing.T) {
 	w2 := col.AddWindow(" w2 ", "c2")
 	w3 := col.AddWindow(" w3 ", "c3")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button3, 0))
@@ -1976,7 +1976,7 @@ func TestRemoveMaximizedWindowClearsFlag(t *testing.T) {
 	w1 := col.AddWindow(" w1 ", "c1")
 	w2 := col.AddWindow(" w2 ", "c2")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Maximize w1.
@@ -2013,7 +2013,7 @@ func TestMoveMaximizedWindowClearsSourceFlag(t *testing.T) {
 	w1 := col0.AddWindow(" w1 ", "c1")
 	w2 := col0.AddWindow(" w2 ", "c2")
 
-	e.Resize()
+	e.resize()
 	e.Draw()
 
 	// Maximize w1 in col0.
@@ -2068,7 +2068,7 @@ func TestColumnGutterAllButtonsStartDrag(t *testing.T) {
 			col1 := NewColumn(60, 1, 60, e.h-1, e, e.Execute)
 			col1.explicitWidth = 60
 			e.columns = append(e.columns, col0, col1)
-			e.Resize()
+			e.resize()
 			e.Draw()
 
 			// Click col1's gutter at (col1.x, col1.y).

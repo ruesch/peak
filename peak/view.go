@@ -62,10 +62,6 @@ type BaseView struct {
 	scroll     ScrollState
 }
 
-func (v *BaseView) GetPos() (x, y, w, h int)    { return v.x, v.y, v.w, v.h }
-func (v *BaseView) SetPos(x, y, w, h int)       { v.x, v.y, v.w, v.h = x, y, w, h }
-func (v *BaseView) GetBounds() (x, y, w, h int) { return v.x, v.y, v.w, v.h }
-
 func (s *ScrollState) Clamp(total, visible int) {
 	s.Pos = max(0, min(total, s.Pos))
 }
@@ -98,21 +94,14 @@ func GetWordBoundaries(x int, length int, getChar func(int) rune) (int, int) {
 	return start, end
 }
 
-// LineProvider is an interface for types that can provide lines for searching.
-// GetLine returns the rune sequence for line y; the slice must not be modified.
-type LineProvider interface {
-	LineCount() int
-	GetLine(y int) []rune
-}
-
 // Search performs a two-pass search (forward from start, then wrap around).
 // It returns the line number, the resulting selection, and true if found.
-func Search(lp LineProvider, word string, start Cursor) (int, Selection, bool) {
+func Search(buf *Buffer, word string, start Cursor) (int, Selection, bool) {
 	if word == "" {
 		return -1, Selection{}, false
 	}
-
-	count := lp.LineCount()
+	lines := buf.lines
+	count := len(lines)
 	if count == 0 {
 		return -1, Selection{}, false
 	}
@@ -139,51 +128,44 @@ func Search(lp LineProvider, word string, start Cursor) (int, Selection, bool) {
 
 	// Pass 1: startRY to end
 	for y := startRY; y < count; y++ {
-		line := lp.GetLine(y)
+		line := lines[y]
 		sx := 0
 		if y == startRY {
 			sx = min(startRX, len(line))
 		}
 		if x := find(line, sx); x != -1 {
-			return y, Selection{
-				Start:  Cursor{x, y},
-				End:    Cursor{x + wn, y},
-				Active: true,
-			}, true
+			return y, Selection{Start: Cursor{x, y}, End: Cursor{x + wn, y}, Active: true}, true
 		}
 	}
 
 	// Pass 2: 0 to startRY
 	for y := 0; y <= startRY && y < count; y++ {
-		line := lp.GetLine(y)
+		line := lines[y]
 		limit := len(line)
 		if y == startRY {
 			limit = min(startRX, len(line))
 		}
 		if x := find(line[:limit], 0); x != -1 {
-			return y, Selection{
-				Start:  Cursor{x, y},
-				End:    Cursor{x + wn, y},
-				Active: true,
-			}, true
+			return y, Selection{Start: Cursor{x, y}, End: Cursor{x + wn, y}, Active: true}, true
 		}
 	}
 
 	return -1, Selection{}, false
 }
 
-func GetTextInSelection(lp LineProvider, s Selection, trimRight bool) string {
+func GetTextInSelection(buf *Buffer, s Selection, trimRight bool) string {
 	if !s.Active {
 		return ""
 	}
 	start, end := s.Ordered()
-	count := lp.LineCount()
+	lines := buf.lines
+	count := len(lines)
 	var sb strings.Builder
 	for y := start.y; y <= end.y; y++ {
 		if y < 0 || y >= count {
 			continue
 		}
-		line := lp.GetLine(y)
+		line := lines[y]
 		x1, x2 := 0, len(line)
 		if y == start.y {
 			x1 = start.x
@@ -191,10 +173,8 @@ func GetTextInSelection(lp LineProvider, s Selection, trimRight bool) string {
 		if y == end.y {
 			x2 = end.x
 		}
-
 		x1 = max(0, min(x1, len(line)))
 		x2 = max(0, min(x2, len(line)))
-
 		if x1 < x2 {
 			content := string(line[x1:x2])
 			if trimRight {

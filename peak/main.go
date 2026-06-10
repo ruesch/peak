@@ -170,7 +170,7 @@ func (e *Editor) Init(numCols int, args []string) {
 		// Initial directory listing
 		e.Execute(lastCol, win, "Get")
 	}
-	e.Resize()
+	e.resize()
 }
 
 // Run enters the main event loop.
@@ -229,9 +229,7 @@ func (e *Editor) Run() {
 			}
 			switch req.kind {
 			case 'x':
-				if req.win != nil && req.win.onExec != nil {
-					req.win.onExec(req.col, req.win, req.text)
-				}
+				req.win.onExec(req.col, req.win, req.text)
 			case 'l':
 				e.Plumb(req.win, req.text)
 			case 'e':
@@ -259,11 +257,11 @@ func (e *Editor) trackDragScroll(view View, my int) {
 	if e.active == nil || view != e.active.body {
 		return
 	}
-	_, vy, _, vh := view.GetPos()
+	bv := e.active.bodyView
 	var dir int
-	if my >= vy+vh-1 {
+	if my >= bv.y+bv.h-1 {
 		dir = 1
-	} else if my <= vy {
+	} else if my <= bv.y {
 		dir = -1
 	}
 	if dir != 0 {
@@ -284,9 +282,7 @@ func (e *Editor) Draw() {
 	e.syncChildren()
 	e.WalkLayout()
 	e.WalkDraw(e.screen)
-	if e.focusedView != nil {
-		e.focusedView.ShowCursor(e.screen)
-	}
+	e.focusedView.ShowCursor(e.screen)
 	e.screen.Show()
 }
 
@@ -304,23 +300,19 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 	switch ev := ev.(type) {
 	case *tcell.EventKey:
 		if ev.Key() == tcell.KeyCtrlF {
-			if e.focusedView != nil {
-				if tv, ok := e.focusedView.(*TextView); ok && tv.buffer.GetSelectedText() != "" {
-					return e.Execute(nil, nil, "Look"), true
-				}
+			if tv, ok := e.focusedView.(*TextView); ok && tv.buffer.GetSelectedText() != "" {
+				return e.Execute(nil, nil, "Look"), true
 			}
 		}
-		if e.focusedView != nil {
-			win := e.windowOf(e.focusedView)
-			if win != nil {
-				win.lk.Lock()
-			}
-			quit := e.focusedView.HandleEvent(ev)
-			if win != nil {
-				win.lk.Unlock()
-			}
-			return quit, true
+		win := e.windowOf(e.focusedView)
+		if win != nil {
+			win.lk.Lock()
 		}
+		quit := e.focusedView.HandleEvent(ev)
+		if win != nil {
+			win.lk.Unlock()
+		}
+		return quit, true
 	case *tcell.EventMouse:
 		mx, my := ev.Position()
 		buttons := ev.Buttons()
@@ -408,9 +400,6 @@ func (e *Editor) windowOf(v View) *Window {
 }
 
 func (e *Editor) ActivateWindow(win *Window) {
-	if win == nil {
-		return
-	}
 	prev := e.active
 	e.active = win
 	e.focusedView = win.body
@@ -455,9 +444,6 @@ func (e *Editor) moveColumnTo(col *Column, mx int) {
 
 func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 	colIdx := slices.Index(e.columns, win.parent)
-	if colIdx < 0 {
-		return
-	}
 	cur := e.columns[colIdx]
 
 	var toCol *Column
@@ -526,14 +512,7 @@ func (e *Editor) moveWindowTo(win *Window, mx, my int) {
 	cur.Resize(cur.x, cur.y, cur.w, cur.h)
 }
 
-func (e *Editor) Resize() {
-	e.resize()
-}
-
 func (e *Editor) resize() {
-	if len(e.columns) == 0 {
-		return
-	}
 	e.tag.Resize(0, 0, e.w, 1)
 
 	if cap(e.columnNodes) < len(e.columns) {

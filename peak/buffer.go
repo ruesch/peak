@@ -108,27 +108,8 @@ func (b *Buffer) SetSelection(start, end Cursor) {
 	b.selection.Active = true
 }
 
-func (b *Buffer) LineCount() int {
-	return len(b.lines)
-}
-
-func (b *Buffer) GetLine(y int) []rune {
-	if y < 0 || y >= len(b.lines) {
-		return nil
-	}
-	return b.lines[y]
-}
-
 func (b *Buffer) GetSelectedText() string {
 	return GetTextInSelection(b, b.selection, false)
-}
-
-func (b *Buffer) GetTextInRange(start, end Cursor) string {
-	return GetTextInSelection(b, Selection{Start: start, End: end, Active: true}, false)
-}
-
-func (b *Buffer) IsSelected(x, y int) bool {
-	return b.selection.Contains(x, y, false)
 }
 
 func (b *Buffer) Len() int {
@@ -147,7 +128,8 @@ func (b *Buffer) RunesInRange(q0, q1 int) []rune {
 	if q0 >= q1 {
 		return nil
 	}
-	return []rune(b.GetTextInRange(b.RuneOffsetToCursor(q0), b.RuneOffsetToCursor(q1)))
+	q0c, q1c := b.RuneOffsetToCursor(q0), b.RuneOffsetToCursor(q1)
+	return []rune(GetTextInSelection(b, Selection{Start: q0c, End: q1c, Active: true}, false))
 }
 
 func (b *Buffer) GetText() string {
@@ -160,8 +142,6 @@ func (b *Buffer) GetText() string {
 	}
 	return sb.String()
 }
-
-func (b *Buffer) GetRunes() []rune { return b.RunesInRange(0, b.Len()) }
 
 func (b *Buffer) bumpVersion() { b.version, b.nextVer = b.nextVer, b.nextVer+1 }
 

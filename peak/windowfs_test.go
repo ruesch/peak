@@ -23,7 +23,7 @@ func setupWindowTest(t *testing.T) (*Editor, *Column, *Window, tcell.SimulationS
 	e.columns = append(e.columns, col)
 	win := col.AddWindow(" /tmp/test.txt Get Put Del ", "hello world\n")
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 	return e, col, win, s
 }
 
@@ -465,7 +465,7 @@ func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot create term window: %v", err)
 	}
-	e.Resize()
+	e.resize()
 
 	// Create a text window in /tmp to write errors from
 	textWin := col.AddWindow(" /tmp/src.txt Get Put Del ", "content")
@@ -552,7 +552,7 @@ func TestWindowFsEventWriteOnlyNoSub(t *testing.T) {
 	if ef.sub != nil {
 		t.Error("write-only open should not create a subscription")
 	}
-	if win.hasEventSubs() {
+	if len(win.eventSubs) > 0 {
 		t.Error("write-only open should not count as a subscriber")
 	}
 }
@@ -568,7 +568,7 @@ func TestWindowFsEventSuppression(t *testing.T) {
 	}
 	defer evF.Close()
 
-	if !win.hasEventSubs() {
+	if len(win.eventSubs) == 0 {
 		t.Fatal("expected subscriber after opening event file")
 	}
 
@@ -658,7 +658,7 @@ func TestLifecycleEventsNewClose(t *testing.T) {
 	e, s := setupTest(t, 120, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
-	e.Resize()
+	e.resize()
 	_ = s
 
 	sub := subscribeGlobal(e)
@@ -694,7 +694,7 @@ func TestLifecycleEventsFocus(t *testing.T) {
 	e, s := setupTest(t, 120, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
-	e.Resize()
+	e.resize()
 	_ = s
 
 	win1 := col.AddWindow(" /tmp/a.txt Get Put Del ", "")
@@ -736,7 +736,7 @@ func TestLifecycleEventsGetPut(t *testing.T) {
 	e.columns = append(e.columns, col)
 	win := col.AddWindow(" "+tmp.Name()+" Get Put Del ", "")
 	e.ActivateWindow(win)
-	e.Resize()
+	e.resize()
 
 	sub := subscribeGlobal(e)
 	defer e.ninep.bus.unsubscribe(sub)
@@ -803,7 +803,7 @@ func TestFindOrCreateErrorWindowSkipsTerminal(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot create term window: %v", err)
 	}
-	e.Resize()
+	e.resize()
 
 	// Create a source text window in /tmp
 	srcWin := col.AddWindow(" /tmp/src.txt Get Put Del ", "")
@@ -872,7 +872,7 @@ func TestEventScannerIntegration(t *testing.T) {
 	e, s := setupTest(t, 120, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
 	e.columns = append(e.columns, col)
-	e.Resize()
+	e.resize()
 	_ = s
 
 	sub := subscribeGlobal(e)

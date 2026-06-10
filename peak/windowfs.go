@@ -19,11 +19,8 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 	case "", ".":
 		return &simpleFileInfo{name: ".", isDir: true, mode: 0555}, nil
 	case "body":
-		var size int64
 		fs.win.lk.Lock()
-		if buf := fs.win.body.GetBuffer(); buf != nil {
-			size = int64(len(buf.GetText()))
-		}
+		size := int64(len(fs.win.body.GetBuffer().GetText()))
 		fs.win.lk.Unlock()
 		return &simpleFileInfo{name: "body", mode: 0644, size: size}, nil
 	case "tag":
@@ -42,18 +39,16 @@ func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
 		fs.win.lk.Unlock()
 		return &simpleFileInfo{name: "addr", mode: 0644, size: int64(len(snap))}, nil
 	case "data":
-		var size int64
 		fs.win.lk.Lock()
-		if buf := fs.win.body.GetBuffer(); buf != nil {
-			runes := buf.RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
-			size = int64(len([]byte(string(runes))))
-		}
+		runes := fs.win.body.GetBuffer().RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
+		size := int64(len([]byte(string(runes))))
 		fs.win.lk.Unlock()
 		return &simpleFileInfo{name: "data", mode: 0644, size: size}, nil
 	case "rdsel":
 		var snap []byte
 		fs.win.lk.Lock()
-		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
+		buf := fs.win.body.GetBuffer()
+		if buf.selection.Active {
 			start, end := buf.selection.Ordered()
 			q0 := buf.RuneOffsetOfPos(start.y, start.x)
 			q1 := buf.RuneOffsetOfPos(end.y, end.x)
@@ -89,10 +84,8 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 		f := &winBodyFile{win: fs.win}
 		if flag&os.O_WRONLY == 0 {
 			fs.win.lk.Lock()
-			if buf := fs.win.body.GetBuffer(); buf != nil {
-				f.snap = []byte(buf.GetText())
-				fs.win.bodySnapSeq = fs.win.mutSeq
-			}
+			f.snap = []byte(fs.win.body.GetBuffer().GetText())
+			fs.win.bodySnapSeq = fs.win.mutSeq
 			fs.win.lk.Unlock()
 		}
 		return f, nil
@@ -128,17 +121,16 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 		f := &winDataFile{win: fs.win}
 		if flag&os.O_WRONLY == 0 {
 			fs.win.lk.Lock()
-			if buf := fs.win.body.GetBuffer(); buf != nil {
-				runes := buf.RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
-				f.snap = []byte(string(runes))
-			}
+			runes := fs.win.body.GetBuffer().RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
+			f.snap = []byte(string(runes))
 			fs.win.lk.Unlock()
 		}
 		return f, nil
 	case "rdsel":
 		f := &winRdselFile{win: fs.win}
 		fs.win.lk.Lock()
-		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
+		buf := fs.win.body.GetBuffer()
+		if buf.selection.Active {
 			start, end := buf.selection.Ordered()
 			q0 := buf.RuneOffsetOfPos(start.y, start.x)
 			q1 := buf.RuneOffsetOfPos(end.y, end.x)
@@ -149,7 +141,8 @@ func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.Fil
 	case "wrsel":
 		f := &winWrselFile{win: fs.win}
 		fs.win.lk.Lock()
-		if buf := fs.win.body.GetBuffer(); buf != nil && buf.selection.Active {
+		buf := fs.win.body.GetBuffer()
+		if buf.selection.Active {
 			start, end := buf.selection.Ordered()
 			f.q0 = buf.RuneOffsetOfPos(start.y, start.x)
 			f.q1 = buf.RuneOffsetOfPos(end.y, end.x)
@@ -315,16 +308,10 @@ func (f *winBodyFile) Close() error {
 		return nil
 	}
 	text := string(f.writes)
-	var modified bool
 	f.win.lk.Lock()
-	if buf := f.win.body.GetBuffer(); buf != nil {
-		buf.SetText(text)
-		modified = true
-	}
+	f.win.body.GetBuffer().SetText(text)
 	f.win.lk.Unlock()
-	if modified {
-		f.win.editor.Redraw()
-	}
+	f.win.editor.Redraw()
 	return nil
 }
 
@@ -388,16 +375,14 @@ func ctlSnap(win *Window) []byte {
 	isDir, isDirty := 0, 0
 	win.lk.Lock()
 	tagLen = win.tag.buffer.Len()
-	if buf := win.body.GetBuffer(); buf != nil {
-		bodyLen = buf.Len()
-	}
+	bodyLen = win.body.GetBuffer().Len()
 	if win.kind == WinDir {
 		isDir = 1
 	}
 	if win.IsDirty() {
 		isDirty = 1
 	}
-	_, _, width, _ = win.body.GetPos()
+	width = win.w - 1
 	maxtab = 4
 	if tv, ok := win.body.(*TextView); ok {
 		maxtab = tv.tabWidth
@@ -506,16 +491,10 @@ func (f *winWrselFile) Close() error {
 		return nil
 	}
 	runes := []rune(string(f.writes))
-	var modified bool
 	f.win.lk.Lock()
-	if buf := f.win.body.GetBuffer(); buf != nil {
-		buf.ReplaceRangeRunes(f.q0, f.q1, runes)
-		modified = true
-	}
+	f.win.body.GetBuffer().ReplaceRangeRunes(f.q0, f.q1, runes)
 	f.win.lk.Unlock()
-	if modified {
-		f.win.editor.Redraw()
-	}
+	f.win.editor.Redraw()
 	return nil
 }
 

@@ -563,7 +563,7 @@ func compileRegex(pat string) (*regexp.Regexp, error) {
 
 func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 	addr := dot
-	runes := ctx.Buffer.GetRunes()
+	runes := ctx.Buffer.RunesInRange(0, ctx.Buffer.Len())
 	if cmd.addr != nil {
 		addr = cmdaddress(cmd.addr, dot, runes, 0)
 	} else {
