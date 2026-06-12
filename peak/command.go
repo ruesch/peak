@@ -452,7 +452,11 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 			if newF, err := mountFs.OpenFile("new", os.O_RDWR, 0); err == nil {
 				go func() {
 					defer newF.Close()
-					if _, werr := newF.WriteAt([]byte(toDir(relPath)), 0); werr != nil {
+					payload := toDir(relPath)
+					if arg != "" {
+						payload += "\n" + arg
+					}
+					if _, werr := newF.WriteAt([]byte(payload), 0); werr != nil {
 						e.screen.PostEvent(tcell.NewEventInterrupt(func() {
 							e.showError(targetCol, win, "", "remote session: "+werr.Error())
 						}))

@@ -120,7 +120,7 @@ func (fs *hostFs) getSession(host string, id int) *sshSession {
 
 // newPTYSession dials host, allocates a PTY-backed shell, and returns the
 // session with its assigned ID.
-func (fs *hostFs) newPTYSession(host, dir string) (*sshSession, int, error) {
+func (fs *hostFs) newPTYSession(host, dir, cmd string) (*sshSession, int, error) {
 	client, err := fs.sftp.getClient(host)
 	if err != nil {
 		return nil, 0, err
@@ -152,9 +152,13 @@ func (fs *hostFs) newPTYSession(host, dir string) (*sshSession, int, error) {
 	sh.cond = sync.NewCond(&sh.mu)
 
 	start := sess.Shell
-	if dir != "" {
-		cmd := "sh -c " + shellescape.Quote("cd "+shellescape.Quote(dir)+" && exec ${SHELL:-sh}")
-		start = func() error { return sess.Start(cmd) }
+	if dir != "" || cmd != "" {
+		run := "exec ${SHELL:-sh}"
+		if cmd != "" {
+			run = "exec ${SHELL:-sh} -c " + shellescape.Quote(cmd)
+		}
+		startCmd := remoteCmd(dir, run)
+		start = func() error { return sess.Start(startCmd) }
 	}
 	if err := start(); err != nil {
 		sess.Close()
@@ -164,6 +168,15 @@ func (fs *hostFs) newPTYSession(host, dir string) (*sshSession, int, error) {
 
 	id := fs.addSession(host, sh)
 	return sh, id, nil
+}
+
+// remoteCmd builds a shell command safe to run via SSH exec or CombinedOutput.
+// It wraps in explicit sh so non-POSIX login shells (e.g. fish) are not an issue.
+func remoteCmd(dir, run string) string {
+	if dir == "" {
+		return "sh -c " + shellescape.Quote(run)
+	}
+	return "sh -c " + shellescape.Quote(`cd "$1" && `+run) + " sh " + shellescape.Quote(dir)
 }
 
 // remoteDir extracts the remote working directory from a "host/fs/..." relPath.
@@ -306,7 +319,7 @@ func (fs *hostFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File,
 	case kindHostDir:
 		return fs.hostDir(p.host), nil
 	case kindHostIO:
-		sh, _, err := fs.newPTYSession(p.host, "")
+		sh, _, err := fs.newPTYSession(p.host, "", "")
 		if err != nil {
 			return nil, err
 		}
@@ -538,12 +551,17 @@ func (f *newFile) WriteAt(p []byte, _ int64) (int, error) {
 	if f.resp != nil {
 		return 0, os.ErrPermission
 	}
-	relPath := strings.TrimSpace(string(p))
+	parts := strings.SplitN(strings.TrimRight(string(p), "\n"), "\n", 2)
+	relPath := strings.TrimSpace(parts[0])
 	if relPath == "" {
 		return len(p), nil
 	}
+	cmd := ""
+	if len(parts) > 1 {
+		cmd = strings.TrimSpace(parts[1])
+	}
 	host := strings.SplitN(relPath, "/", 2)[0]
-	_, id, err := f.fs.newPTYSession(host, remoteDir(relPath))
+	_, id, err := f.fs.newPTYSession(host, remoteDir(relPath), cmd)
 	if err != nil {
 		return 0, err
 	}
@@ -578,9 +596,7 @@ func (f *runFile) WriteAt(p []byte, _ int64) (int, error) {
 	cmd := strings.TrimSpace(lines[1])
 
 	host := strings.SplitN(relPath, "/", 2)[0]
-	if dir := remoteDir(relPath); dir != "" {
-		cmd = "sh -c " + shellescape.Quote("cd "+shellescape.Quote(dir)+" && "+cmd)
-	}
+	cmd = remoteCmd(remoteDir(relPath), cmd)
 	client, err := f.fs.sftp.getClient(host)
 	if err != nil {
 		return 0, err
