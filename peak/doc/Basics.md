@@ -1,79 +1,117 @@
 # Peak Basics
 
-Peak is a TUI (Terminal User Interface) text editor inspired by the Plan 9 Acme editor. It follows the philosophy that everything is editable text, and every piece of text can be a command.
+Peak is a TUI text editor inspired by Plan 9 Acme. Text is the primary
+interface: you write what you want to do and execute it.
 
-The core soul of Peak is interaction, where you write what you want to do and execute it.
 
 ## 1. The Layout
 
-The editor is divided into several areas, all of which are editable:
+The editor is divided into several areas, all editable:
 
-- Global Tag (Top Row): Contains global commands like NewCol and Exit. You can type any command here to run it globally.
-- Columns: The screen is divided vertically into columns. Each column has its own Column Tag (top of the column) with commands like New and Delcol.
-- Windows: Each column contains one or more windows. A window has a Window Tag (top of the window) and a Body (where you edit text).
+- Global Tag (top row): Contains global commands NewCol Help Exit.
+  You can type any command here and execute it.
+- Columns: The screen is divided vertically into columns. Each column
+  has a Column Tag at the top with commands New Zerox Win Delcol.
+- Windows: Each column has one or more windows, each with a Window Tag
+  and a Body.
 
-The Window Tag usually contains the filename and standard commands (Get, Put, Look, etc.), but it is just a text buffer—you can type and execute anything there.
+The Window Tag shows the filename and Get Put Undo Redo Snarf Zerox Del
+by default, but it is a plain text buffer and you can type or execute
+anything there.
 
-The Handle is the small colored area at the top-left of each column and window. You can click and drag it to move or resize elements.
+The Handle is the small colored area at the left edge of each column and
+window. Drag it to move or resize elements.
 
-## 2. Mouse Interaction (The Acme Way)
 
-Acme-style editors rely heavily on three mouse buttons to interact with text as data and commands.
+## 2. Mouse Interaction
 
-- Button 1 (Left Click): 
+Three mouse buttons do different things:
+
+- Button 1 (Left):
   - Click to focus a window or tag.
   - Drag to select text.
   - Drag a Handle to move or resize columns and windows.
-- Button 2 (Middle Click): The "Execute" button.
+
+- Button 2 (Middle): Execute.
   - Middle-clicking a word executes it as a command.
-  - If you select text and middle-click the selection, it executes the entire selection.
-  - Commands can be built-ins (like Put) or any external shell command (like ls).
-  - IMPORTANT: You can execute text from anywhere—the tag, the body, or even the output of another command.
-- Button 3 (Right Click): The "Plumb" button.
-  - It "sends" the text to the plumber to decide what to do.
-  - If the text is a filename or path that exists, Peak opens it.
-  - Supports navigation to specific lines and columns:
-    - path           : Opens the file.
-    - path:line      : Opens the file and jumps to the specified line.
-    - path:line:col  : Opens the file and jumps to the specific line and column.
-  - SSH paths with ports can use host::port to avoid ambiguity with line numbers.
-  - If it's a plain word, Peak searches for it (Look).
+  - Selecting text first and then middle-clicking executes the whole selection.
+  - Commands can be built-ins (Put, Get) or any shell command (ls, make, ...).
+  - You can execute text from anywhere: the tag, the body, or command output.
 
-### Scrolling (The Scrollbar Handle)
-The thin vertical bar on the left of a window's body is the scrollbar.
-- Left Click: Scroll up.
-- Right Click: Scroll down.
-- Middle Click: Jump to that position in the file.
+- Button 3 (Right): Plumb.
+  - Sends the clicked text to the plumber, which decides what to do with it.
+  - If the text is a file path, Peak opens it.
+  - Supports line and column navigation:
+    - path           opens the file.
+    - path:line      opens the file at the given line.
+    - path:line:col  opens the file at the given line and column.
+  - SSH paths with ports use host::port to avoid ambiguity with line numbers.
+  - URLs (http://, https://, mailto:, magnet:) are opened in the system browser.
+  - If the text is not a recognized path or URL, Peak searches for it (Look).
 
-## 3. Essential Commands
+### Scrollbar
 
-You can execute these by middle-clicking them in any tag or even in the text body:
+The thin vertical bar on the left of a window body is the scrollbar.
 
-- Get: (Re)loads the file from disk.
-- Put: Saves the current buffer to disk.
-- New: Opens a new window.
-- Del: Closes the current window.
-- Undo / Redo: Standard history navigation.
-- Snarf: Copies the current selection to the system clipboard.
-- Look: Searches for the selected text (or the word under the cursor).
-- Exit: Quits Peak.
+- Left               Scroll up.
+- Right              Scroll down.
+- Middle             Jump to that position in the file.
 
-External Commands: Any word that isn't a built-in command (like ls, grep, or make) will be executed as a shell command. The output usually appears in a new window named +Errors.
 
-## 4. Keyboard Shortcuts
+## 3. Commands
 
-While the mouse is primary, some standard keyboard shortcuts are available:
+Middle-click any word to execute it as a command. Built-ins cover window
+and file management (Get, Put, New, Win, Del, Zerox, ...), text operations
+(Undo, Redo, Snarf, Look, Edit), and more. Any non-built-in word runs as
+a shell command; output goes to +Errors. Pipe operators (<, >, |) work on
+the current selection.
 
-- Ctrl-C / Ctrl-X / Ctrl-V: Copy / Cut / Paste.
-- Ctrl-Z / Ctrl-Y: Undo / Redo.
-- Ctrl-F: Execute Look on the current selection.
+See Commands.md for the full reference.
 
-See Shortcuts.md for a complete list of navigation and editing shortcuts.
 
-## 5. Typical Workflow
+## 4. Terminal Windows
 
-1. Open a file: Type the filename in a tag and Right-Click it.
-2. Edit: Click in the body and start typing.
-3. Save: Middle-click the Put command in the window's tag.
-4. Search: Select a word and Middle-click Look (or press Ctrl-F).
-5. Run a command: Type ls -l anywhere, select it, and Middle-click it.
+Win opens a terminal window running your shell in the current directory.
+Input goes directly to the shell, so text editing commands (Get, Put,
+Undo, Redo, and text modification part in Edit) do not apply. Keyboard
+shortcuts that would conflict with shell input require the Alt modifier:
+
+- Alt+Ctrl-C        Copy to clipboard.
+- Alt+Ctrl-V        Paste from clipboard.
+- Alt+Ctrl-F        Look on the current selection.
+- Alt+PgUp          Scroll up.
+- Alt+PgDn          Scroll down.
+- Ctrl+Middle-click Execute a Peak command.
+- Ctrl+Right-click  Plumb.
+
+### Path Following
+
+Right-clicking a path or running a command uses the terminal's current
+directory. To enable this, the shell must emit OSC 7 on each prompt:
+
+```
+\e]7;file://hostname/path\a
+```
+
+Fish shell supports this out of the box. For other shells, add the escape
+to the respective prompt function or hook.
+
+
+## 5. Keyboard Shortcuts
+
+- Ctrl-C            Copy to clipboard.
+- Ctrl-X            Cut to clipboard.
+- Ctrl-V            Paste from clipboard.
+- Ctrl-Z / Ctrl-Y   Undo / Redo.
+- Ctrl-F            Run Look on the current selection.
+
+See Shortcuts.md for the full list of navigation and editing shortcuts.
+
+
+## 6. Typical Workflow
+
+1. Open a file: right-click its path anywhere in the editor.
+2. Edit: click in the body and type.
+3. Save: middle-click Put in the window tag.
+4. Search: select a word and middle-click Look, or press Ctrl-F.
+5. Run a command: type ls -l anywhere, select it, and middle-click it.

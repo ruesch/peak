@@ -1,80 +1,132 @@
 # Peak Virtual Filesystem
 
-Peak has a unified internal representation of a simplified virtual filesystem (VFS). This allows Peak to treat local files, remote files, and internal state through a consistent interface.
+Peak exposes its internal state as a virtual filesystem (VFS) rooted at
+/peak. The VFS is served over a 9P socket at ~/.peak/9p, which makes it
+accessible both inside Peak (by typing /peak/... paths) and from external
+tools over the socket.
 
-The filesystem can be accessed in two ways:
 
-1. Inside Peak: By typing /peak in any tag or body.
-2. Outside Peak: By mounting it as a 9P filesystem.
+## Accessing via 9P
 
-## Mounting via 9P
+To access the VFS from outside Peak, mount the socket:
 
-Peak starts a 9P server listening on a Unix socket at ~/.peak/9p. You can mount this on your host system.
+Using 9pfuse:
 
-### Using 9pfuse (Recommended):
+    9 9pfuse unix!$HOME/.peak/9p <mountpoint>
 
-    $ 9 9pfuse unix!'$HOME/.peak/9p' <mountpoint>
+Using Linux kernel 9P:
 
-Note: You must expand $HOME and use single quotes if you are using bash.
+    mount -t 9p ~/.peak/9p <mountpoint> -o trans=unix,uname=$USER
 
-### Using Linux Kernel 9P Support:
+Note: when inspecting the VFS from a shell, use a plain shell (e.g. sh)
+rather than a configured one. Configured shells may probe the working
+directory on startup, which can trigger unwanted behavior inside paths
+like /peak/ssh.
 
-    # mount -t 9p ~/.peak/9p <mountpoint> -o trans=unix,uname=$USER
 
-Note: 9pfuse is recommended because Peak cannot unmount itself; you must manually clear the mountpoint.
+## Control Files
 
-### Shell Compatibility Note
+These files live directly under /peak:
 
-If you want to inspect the filesystem, please use pure shells (you can enter sh for bash), instead of configured shells. Highly configured shells often check for specific files or folders in the current path, which could trigger unwanted logic. For example, in /peak/ssh, it could make Peak attempt to connect to non-existent hosts.
+- event             Global event stream. Each line is "new <id>" or
+                    "close <id>" when a window opens or closes.
+                    Reads block until an event arrives.
+- exec              Write a window title to create an externally-driven
+                    terminal window; read back the window ID.
+- mount             Write "<socket> <path>" to mount a 9P server at
+                    path. Read to list current mounts.
+- unmount           Write a path to detach it from the VFS.
+- bind              Write "<src> <dst>" to overlay src onto dst. Read
+                    to list current binds.
+- new/              Walking into this directory creates a new empty
+                    window and redirects to its /peak/<id>/ directory.
+- srv/              Virtual socket registry. Open read-write to post a
+                    service; open read-only to connect to one.
 
-## Acme Compatibility
 
-The Peak VFS is designed to be a functional superset of the Acme 9P interface. However, this implementation is currently in progress. While the structure is in place to support per-window directories (e.g., /peak/1/body, /peak/1/tag), only the index file is currently fully available for session management.
+## Per-Window Files
 
-## VFS Structure
+Each open window is accessible at /peak/<id>/:
 
-The VFS is rooted at /peak and contains several specialized directories:
+- body              Window body text. Readable and writable.
+- tag               Window tag text. Readable and writable.
+- ctl               Control file. Read returns the window status:
+                    <id> <taglen> <bodylen> <isdir> <isdirty> <width>
+                    terminal <maxtab>. Write executes a command.
+- event             Window event stream for externally-driven windows.
+                    Reads block until an event arrives.
+- addr              Current address as #q0,#q1 character offsets.
+                    Readable and writable.
+- data              Text within the current address range. Readable and
+                    writable. Writing replaces the addressed range.
+- rdsel             Read-only snapshot of the selection at open time.
+- wrsel             Write-only. Replaces the open-time selection on close.
+- errors            Write-only. Appends text to the window error output.
+- color             Write-only. Sets the window handle color.
+- io                PTY I/O for terminal windows only.
 
-### /peak/index
 
-A virtual file that provides a machine-readable list of all open windows in the current Peak session. Each line contains:
+## Built-in Paths
 
-- Window ID
-- Tag length
-- Body length
-- Directory flag (1 if directory, 0 otherwise)
-- Dirty flag (1 if modified, 0 otherwise)
-- Tag text
+- /peak/doc/        Peak's embedded documentation files.
+- /peak/theme/      Color themes. Read to list; write a name to apply
+                    (via the Theme command).
+- /peak/mirage/     In-memory scratch space. Contents lost on exit.
 
-### /peak/doc
 
-Provides access to Peak's built-in documentation. These files are embedded directly into the Peak binary.
+## SSH (peak-ssh)
 
-### /peak/ssh
+SSH filesystem support is provided by the external peak-ssh program.
+Run it to mount remote hosts into the VFS:
 
-Allows transparent access to remote filesystems via SFTP. Paths follow the format:
+    peak-ssh
+
+By default it mounts at /peak/ssh. Files are accessed as:
 
     /peak/ssh/[user@]host[::port]/path/to/file
 
-If user is not specified, current username will be used.
-This functionality requires SSH_AUTH_SOCK to connect to SSH server.
+If no user is given, the current username is used. Authentication uses
+SSH_AUTH_SOCK. Use ~ in the path for the remote home directory
+(e.g. /peak/ssh/host/~/.bashrc).
 
-The symbol `~` can be used in the path to refer to the home directory of the user on the remote host (e.g., /peak/ssh/user@host/~/.bashrc).
+Use host::port to specify a non-standard port. A single colon is
+reserved for line and column numbers in the plumb syntax.
 
-If the window is inside a SFTP filesystem, all external commands will be run on remote server.
+Commands executed from a window inside /peak/ssh/... run on the remote
+host.
 
-Note: If you need to specify a non-standard SSH port, it is recommended to use the host::port format (e.g., /peak/ssh/user@host::2222/path/to/file) to avoid ambiguity with the plumb syntax, which uses a single colon for line and column numbers. Alternatively, you can also add a trailing slash.
 
-### /peak/git
+## Git (peak-git)
 
-Allows transparent, read-only access to remote Git+HTTPS repositories. Paths follow the format:
+Git repository access is provided by the external peak-git program. Run
+it alongside Peak:
 
-    /peak/git/host[::port]:user:repo/branch/path/to/file
+    peak-git
 
-Use :: for default branch.
+peak-git watches window lifecycle events. When a window opens a file
+inside a git repository, it auto-mounts that repository's VFS under
+/peak/git-<id>/ (where id is derived from the repository path). The
+mount is removed when the last window from that repository is closed.
 
-It clones the specified branch into memory, without leaving any files on disk. This is particularly useful for quickly inspecting code or comparing versions across different branches without cloning.
+Each mounted repository exposes:
 
-### /peak/mirage
+- HEAD              Current HEAD ref.
+- log               Commit log for HEAD.
+- status            Working tree status.
+- diff              Diff of the working tree against HEAD.
+- staged            Staged changes. Readable and writable.
+- commit            Write-only. Commits staged changes.
+- reset             Write-only. Resets staged changes.
+- heads/<branch>/   Local branch directory.
+- remotes/<r>/<b>/  Remote branch directory.
 
-A virtual filesystem residing in memory. You can write text here, however, it will be lost after the editor closes.
+Each local branch directory (heads/<branch>/) exposes:
+
+  - log             Commit log.
+  - diff            Diff against HEAD.
+  - <path>          Files in the branch tree.
+
+Each remote branch directory (remotes/<r>/<b>/) exposes:
+
+  - log             Commit log.
+  - <path>          Files in the remote branch tree.
