@@ -44,6 +44,8 @@ func (fs *peakNamespaceFs) Stat(name string) (os.FileInfo, error) {
 		return &simpleFileInfo{name: "unmount", mode: 0200}, nil
 	case "bind":
 		return &simpleFileInfo{name: "bind", mode: 0600}, nil
+	case "index":
+		return &simpleFileInfo{name: "index", mode: 0444}, nil
 	case "new":
 		return &simpleFileInfo{name: "new", isDir: true, mode: 0555}, nil
 	case "srv":
@@ -102,6 +104,8 @@ func (fs *peakNamespaceFs) OpenFile(name string, flag int, perm os.FileMode) (af
 		return &unmountFile{editor: fs.editor}, nil
 	case "bind":
 		return &bindFile{editor: fs.editor, data: []byte(fs.editor.ninep.ListBinds())}, nil
+	case "index":
+		return &indexFile{data: indexSnap(fs.editor)}, nil
 	case "srv", "srv/":
 		return &srvDirFile{reg: fs.srvReg}, nil
 	case "", ".":
@@ -154,6 +158,7 @@ type peakRootDirFile struct {
 var peakVirtualEntries = []os.FileInfo{
 	&simpleFileInfo{name: "exec", mode: 0600},
 	&simpleFileInfo{name: "event", mode: 0444},
+	&simpleFileInfo{name: "index", mode: 0444},
 	&simpleFileInfo{name: "mount", mode: 0600},
 	&simpleFileInfo{name: "unmount", mode: 0200},
 	&simpleFileInfo{name: "bind", mode: 0600},
@@ -339,6 +344,67 @@ func (f *bindFile) Read(p []byte) (int, error) {
 
 func (f *bindFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
 func (f *bindFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
+
+// indexSnap builds the /peak/index payload. Each open window produces one line:
+//
+//	%11d %11d %11d %11d %11d <tag>\n
+//	id    taglen bodylen isdir isdirty
+//
+// This matches acme's /acme/index format, making existing acme scripts portable.
+func indexSnap(editor *Editor) []byte {
+	var sb strings.Builder
+	editor.Call(func() {
+		for _, col := range editor.columns {
+			for _, win := range col.windows {
+				win.lk.Lock()
+				tagLen := win.tag.buffer.Len()
+				bodyLen := win.body.GetBuffer().Len()
+				isDir, isDirty := 0, 0
+				if win.kind == WinDir {
+					isDir = 1
+				}
+				if win.IsDirty() {
+					isDirty = 1
+				}
+				tag := win.tag.buffer.GetText()
+				win.lk.Unlock()
+				if i := strings.IndexByte(tag, '\n'); i >= 0 {
+					tag = tag[:i]
+				}
+				fmt.Fprintf(&sb, "%11d %11d %11d %11d %11d %s\n",
+					win.ID, tagLen, bodyLen, isDir, isDirty, tag)
+			}
+		}
+	})
+	return []byte(sb.String())
+}
+
+// indexFile is the read-only /peak/index snapshot.
+type indexFile struct {
+	winStub
+	data []byte
+	off  int64
+}
+
+func (f *indexFile) Name() string { return "index" }
+func (f *indexFile) Stat() (os.FileInfo, error) {
+	return &simpleFileInfo{name: "index", mode: 0444, size: int64(len(f.data))}, nil
+}
+func (f *indexFile) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(f.data)) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data[off:])
+	if off+int64(n) >= int64(len(f.data)) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+func (f *indexFile) Read(p []byte) (int, error) {
+	n, err := f.ReadAt(p, f.off)
+	f.off += int64(n)
+	return n, err
+}
 
 // execFile implements /exec: write a window title to create an externally-driven
 // terminal window; read back the numeric window ID followed by a newline.

@@ -31,6 +31,10 @@ These files live directly under /peak:
 - event             Global event stream. Each line is "new <id>" or
                     "close <id>" when a window opens or closes.
                     Reads block until an event arrives.
+- index             Snapshot of all open windows. Each line has the format:
+                    <id> <taglen> <bodylen> <isdir> <isdirty> <tag>
+                    Fields are right-aligned in 11-character columns, matching
+                    acme's /acme/index format.
 - exec              Write a window title to create an externally-driven
                     terminal window; read back the window ID.
 - mount             Write "<socket> <path>" to mount a 9P server at
