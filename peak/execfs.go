@@ -9,57 +9,73 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/gdamore/tcell/v2"
 )
 
-// peakNamespaceFs is a pure virtual file server for the /peak control files.
-// It serves only its own files; the composite VFS routes all other paths (window
-// subdirectories, mounted services) to the appropriate file server before they
-// reach nsFs. The 9P server exposes the complete /peak namespace via rootedFs,
-// which serves nsFs control files through the composite's union-mount routing.
+// peakNamespaceFs is the virtual file server for the /peak control files.
+// It embeds NamespaceFs so Stat/OpenFile/Readdir are derived from the entry
+// table. The only additional behaviour is WalkRedirect (for /peak/new).
 type peakNamespaceFs struct {
+	*vfs.NamespaceFs
 	editor *Editor
-	bus    *globalEventBus
 	srvReg *srvRegistry
 }
 
 func newPeakNamespaceFs(editor *Editor, bus *globalEventBus) *peakNamespaceFs {
-	return &peakNamespaceFs{editor: editor, bus: bus, srvReg: newSrvRegistry()}
-}
-
-func (fs *peakNamespaceFs) Stat(name string) (os.FileInfo, error) {
-	s := trimSlash(name)
-	switch s {
-	case "exec":
-		return &simpleFileInfo{name: "exec", mode: 0600}, nil
-	case "event":
-		return &simpleFileInfo{name: "event", mode: 0444}, nil
-	case "mount":
-		return &simpleFileInfo{name: "mount", mode: 0600}, nil
-	case "unmount":
-		return &simpleFileInfo{name: "unmount", mode: 0200}, nil
-	case "bind":
-		return &simpleFileInfo{name: "bind", mode: 0600}, nil
-	case "index":
-		return &simpleFileInfo{name: "index", mode: 0444}, nil
-	case "new":
-		return &simpleFileInfo{name: "new", isDir: true, mode: 0555}, nil
-	case "srv":
-		return &simpleFileInfo{name: "srv", isDir: true, mode: 0555}, nil
-	case "", ".":
-		return &simpleFileInfo{name: "peak", isDir: true, mode: 0555}, nil
+	srvReg := newSrvRegistry()
+	return &peakNamespaceFs{
+		editor: editor,
+		srvReg: srvReg,
+		NamespaceFs: &vfs.NamespaceFs{
+			RootName: "peak",
+			Entries: []vfs.FileEntry{
+				{Name: "exec", Mode: 0600, Open: func(_ int) (afero.File, error) {
+					return &execFile{editor: editor}, nil
+				}},
+				{Name: "event", Mode: 0444, Open: func(_ int) (afero.File, error) {
+					sub := bus.subscribe()
+					return &globalEventFile{bus: bus, sub: sub}, nil
+				}},
+				{Name: "index", Mode: 0444, Open: func(_ int) (afero.File, error) {
+					return &indexFile{ReadonlyFile: vfs.ReadonlyFile{Data: indexSnap(editor)}}, nil
+				}},
+				{Name: "mount", Mode: 0600, Open: func(_ int) (afero.File, error) {
+					return &mountFile{editor: editor, ReadonlyFile: vfs.ReadonlyFile{Data: []byte(editor.ninep.ListMounts())}}, nil
+				}},
+				{Name: "unmount", Mode: 0200, Open: func(_ int) (afero.File, error) {
+					return &unmountFile{editor: editor}, nil
+				}},
+				{Name: "bind", Mode: 0600, Open: func(_ int) (afero.File, error) {
+					return &bindFile{editor: editor, ReadonlyFile: vfs.ReadonlyFile{Data: []byte(editor.ninep.ListBinds())}}, nil
+				}},
+				// "new" is intercepted by WalkRedirect; direct open is not supported.
+				{Name: "new", Mode: 0555, IsDir: true},
+				{Name: "srv", Mode: 0555, IsDir: true,
+					Open:      func(_ int) (afero.File, error) { return &srvDirFile{reg: srvReg}, nil },
+					ChildMode: 0600,
+					OpenChild: func(child string, flag int) (afero.File, error) {
+						if flag&os.O_RDWR != 0 {
+							sock, serverRight, err := srvReg.create(child)
+							if err != nil {
+								return nil, err
+							}
+							return &srvServerFile{name: child, sock: sock, serverRight: serverRight, reg: srvReg}, nil
+						}
+						// O_RDONLY: Plan 9-style client connect. Dial the service and
+						// return the client end of a fresh independent connection.
+						rwc, err := srvReg.dial(context.Background(), child)
+						if err != nil {
+							return nil, err
+						}
+						return &srvConnFile{rwc: rwc}, nil
+					},
+				},
+			},
+		},
 	}
-	if strings.HasPrefix(s, "srv/") {
-		sname := s[4:]
-		if sname != "" {
-			return &simpleFileInfo{name: sname, mode: 0600}, nil
-		}
-	}
-	return nil, os.ErrNotExist
 }
 
 // WalkRedirect implements vfs.WalkRedirector. Walking "new" from the root
@@ -81,117 +97,9 @@ func (fs *peakNamespaceFs) WalkRedirect(dir, name string) (string, os.FileInfo, 
 			return "", nil, false
 		}
 		id := strconv.Itoa(win.ID)
-		return "/" + id, &simpleFileInfo{name: id, isDir: true, mode: 0555}, true
+		return "/" + id, vfs.NewFileInfo(id, 0555, true), true
 	}
 	return "", nil, false
-}
-
-func (fs *peakNamespaceFs) Open(name string) (afero.File, error) {
-	return fs.OpenFile(name, os.O_RDONLY, 0)
-}
-
-func (fs *peakNamespaceFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	s := trimSlash(name)
-	switch s {
-	case "exec":
-		return &execFile{editor: fs.editor}, nil
-	case "event":
-		sub := fs.bus.subscribe()
-		return &globalEventFile{bus: fs.bus, sub: sub}, nil
-	case "mount":
-		return &mountFile{editor: fs.editor, data: []byte(fs.editor.ninep.ListMounts())}, nil
-	case "unmount":
-		return &unmountFile{editor: fs.editor}, nil
-	case "bind":
-		return &bindFile{editor: fs.editor, data: []byte(fs.editor.ninep.ListBinds())}, nil
-	case "index":
-		return &indexFile{data: indexSnap(fs.editor)}, nil
-	case "srv", "srv/":
-		return &srvDirFile{reg: fs.srvReg}, nil
-	case "", ".":
-		return &peakRootDirFile{}, nil
-	default:
-		if strings.HasPrefix(s, "srv/") {
-			sname := s[4:]
-			if sname == "" {
-				return &srvDirFile{reg: fs.srvReg}, nil
-			}
-			if flag&os.O_RDWR != 0 {
-				sock, err := fs.srvReg.create(sname)
-				if err != nil {
-					return nil, err
-				}
-				return &srvServerFile{name: sname, sock: sock, serverRight: sock.serverRight, reg: fs.srvReg}, nil
-			}
-			// O_RDONLY: Plan 9-style client connect. Dial the service and
-			// return the client end of a fresh independent connection.
-			rwc, err := fs.srvReg.dial(context.Background(), sname)
-			if err != nil {
-				return nil, err
-			}
-			return &srvConnFile{rwc: rwc, name: sname}, nil
-		}
-		return nil, os.ErrNotExist
-	}
-}
-
-func (fs *peakNamespaceFs) Create(n string) (afero.File, error)    { return nil, os.ErrPermission }
-func (fs *peakNamespaceFs) Mkdir(n string, p os.FileMode) error    { return os.ErrPermission }
-func (fs *peakNamespaceFs) MkdirAll(n string, p os.FileMode) error { return os.ErrPermission }
-func (fs *peakNamespaceFs) Remove(n string) error                  { return os.ErrPermission }
-func (fs *peakNamespaceFs) RemoveAll(n string) error               { return os.ErrPermission }
-func (fs *peakNamespaceFs) Rename(o, n string) error               { return os.ErrPermission }
-func (fs *peakNamespaceFs) Chmod(n string, m os.FileMode) error    { return os.ErrPermission }
-func (fs *peakNamespaceFs) Chown(n string, u, g int) error         { return os.ErrPermission }
-func (fs *peakNamespaceFs) Chtimes(n string, a, m time.Time) error { return os.ErrPermission }
-func (fs *peakNamespaceFs) Name() string                           { return "peakNamespaceFs" }
-
-// peakRootDirFile lists the virtual control files served directly by nsFs.
-// The composite's CompositeFile.Readdir merges these entries with window stubs
-// (created in the composite's root MemMapFs by MkdirAll on each window mount),
-// producing the complete /peak directory listing.
-type peakRootDirFile struct {
-	winStub
-	offset int
-}
-
-var peakVirtualEntries = []os.FileInfo{
-	&simpleFileInfo{name: "exec", mode: 0600},
-	&simpleFileInfo{name: "event", mode: 0444},
-	&simpleFileInfo{name: "index", mode: 0444},
-	&simpleFileInfo{name: "mount", mode: 0600},
-	&simpleFileInfo{name: "unmount", mode: 0200},
-	&simpleFileInfo{name: "bind", mode: 0600},
-	&simpleFileInfo{name: "new", isDir: true, mode: 0555},
-	&simpleFileInfo{name: "srv", isDir: true, mode: 0555},
-}
-
-func (f *peakRootDirFile) Name() string { return "/" }
-func (f *peakRootDirFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "peak", isDir: true, mode: 0555}, nil
-}
-func (f *peakRootDirFile) Readdir(count int) ([]os.FileInfo, error) {
-	if count <= 0 {
-		return peakVirtualEntries, nil
-	}
-	if f.offset >= len(peakVirtualEntries) {
-		return nil, io.EOF
-	}
-	end := f.offset + count
-	if end > len(peakVirtualEntries) {
-		end = len(peakVirtualEntries)
-	}
-	res := peakVirtualEntries[f.offset:end]
-	f.offset = end
-	return res, nil
-}
-func (f *peakRootDirFile) Readdirnames(n int) ([]string, error) {
-	infos, err := f.Readdir(n)
-	names := make([]string, len(infos))
-	for i, fi := range infos {
-		names[i] = fi.Name()
-	}
-	return names, err
 }
 
 // ---- globalEventFile ----
@@ -199,15 +107,11 @@ func (f *peakRootDirFile) Readdirnames(n int) ([]string, error) {
 // globalEventFile is a blocking-read stream of editor lifecycle events.
 // Each open of /event creates an independent subscriber.
 type globalEventFile struct {
-	winStub
+	vfs.FileStub
 	bus *globalEventBus
 	sub *eventSub
 }
 
-func (f *globalEventFile) Name() string { return "event" }
-func (f *globalEventFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "event", mode: 0444}, nil
-}
 func (f *globalEventFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.sub.readAt(p, off)
 }
@@ -223,19 +127,12 @@ func (f *globalEventFile) Close() error {
 // 9P server (real Unix socket or virtual /srv entry) into peak's composite VFS.
 // Reading returns the current mount table as "src dst\n" lines.
 type mountFile struct {
-	winStub
+	vfs.ReadonlyFile
 	editor *Editor
-	data   []byte
-	off    int64
 	conn   vfs.ConnCleaner // set by 9P server on open; nil for in-process callers
 }
 
 func (f *mountFile) SetConn(c vfs.ConnCleaner) { f.conn = c }
-
-func (f *mountFile) Name() string { return "mount" }
-func (f *mountFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "mount", mode: 0600}, nil
-}
 
 func (f *mountFile) WriteAt(p []byte, _ int64) (int, error) {
 	parts := strings.Fields(strings.TrimSpace(string(p)))
@@ -253,23 +150,6 @@ func (f *mountFile) WriteAt(p []byte, _ int64) (int, error) {
 	return len(p), nil
 }
 
-func (f *mountFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.data)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.data[off:])
-	if off+int64(n) >= int64(len(f.data)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *mountFile) Read(p []byte) (int, error) {
-	n, err := f.ReadAt(p, f.off)
-	f.off += int64(n)
-	return n, err
-}
-
 func (f *mountFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
 func (f *mountFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
@@ -277,13 +157,8 @@ func (f *mountFile) WriteString(s string) (int, error) { return f.WriteAt([]byte
 
 // unmountFile implements /unmount: write a path to detach it from the VFS.
 type unmountFile struct {
-	winStub
+	vfs.FileStub
 	editor *Editor
-}
-
-func (f *unmountFile) Name() string { return "unmount" }
-func (f *unmountFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "unmount", mode: 0200}, nil
 }
 
 func (f *unmountFile) WriteAt(p []byte, _ int64) (int, error) {
@@ -300,17 +175,10 @@ func (f *unmountFile) WriteString(s string) (int, error) { return f.WriteAt([]by
 
 // bindFile implements /bind: write "<src> <dst>\n" to overlay a local path onto
 // another path in peak's VFS (Plan 9-style namespace bind).
-// Reading returns the current mount table as "src dst\n" lines.
+// Reading returns the current bind table as "src dst\n" lines.
 type bindFile struct {
-	winStub
+	vfs.ReadonlyFile
 	editor *Editor
-	data   []byte
-	off    int64
-}
-
-func (f *bindFile) Name() string { return "bind" }
-func (f *bindFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "bind", mode: 0600}, nil
 }
 
 func (f *bindFile) WriteAt(p []byte, _ int64) (int, error) {
@@ -323,23 +191,6 @@ func (f *bindFile) WriteAt(p []byte, _ int64) (int, error) {
 	}
 	f.editor.ninep.record(&f.editor.ninep.binds, normalizePath(parts[0], ""), normalizePath(parts[1], ""))
 	return len(p), nil
-}
-
-func (f *bindFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.data)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.data[off:])
-	if off+int64(n) >= int64(len(f.data)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *bindFile) Read(p []byte) (int, error) {
-	n, err := f.ReadAt(p, f.off)
-	f.off += int64(n)
-	return n, err
 }
 
 func (f *bindFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
@@ -381,43 +232,16 @@ func indexSnap(editor *Editor) []byte {
 
 // indexFile is the read-only /peak/index snapshot.
 type indexFile struct {
-	winStub
-	data []byte
-	off  int64
-}
-
-func (f *indexFile) Name() string { return "index" }
-func (f *indexFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "index", mode: 0444, size: int64(len(f.data))}, nil
-}
-func (f *indexFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.data)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.data[off:])
-	if off+int64(n) >= int64(len(f.data)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-func (f *indexFile) Read(p []byte) (int, error) {
-	n, err := f.ReadAt(p, f.off)
-	f.off += int64(n)
-	return n, err
+	vfs.ReadonlyFile
 }
 
 // execFile implements /exec: write a window title to create an externally-driven
 // terminal window; read back the numeric window ID followed by a newline.
 type execFile struct {
-	winStub
+	vfs.FileStub
 	editor  *Editor
 	written bool
 	resp    []byte
-}
-
-func (f *execFile) Name() string { return "exec" }
-func (f *execFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "exec", mode: 0600}, nil
 }
 
 func (f *execFile) WriteAt(p []byte, _ int64) (int, error) {
@@ -449,7 +273,7 @@ func (f *execFile) WriteAt(p []byte, _ int64) (int, error) {
 		return 0, fmt.Errorf("exec: failed to create terminal window")
 	}
 	f.written = true
-	f.resp = []byte(fmt.Sprintf("%d\n", id))
+	f.resp = fmt.Appendf(nil, "%d\n", id)
 	return len(p), nil
 }
 
@@ -469,15 +293,12 @@ func (f *execFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(
 
 // ---- /srv virtual socket registry ----
 
-// srvSocket is the server side of a virtual /srv entry. The mux and server
-// pipe are created eagerly when the service posts (srvRegistry.create), so the
-// service can start serving immediately and clients can dial at any time.
-// done is closed by srvServerFile.Close, which also tears down the mux.
+// srvSocket is the server side of a virtual /srv entry. The mux is created
+// eagerly so clients can dial immediately. serverRight is owned by the
+// srvServerFile, not the registry.
 type srvSocket struct {
-	mux         *vfs.NinePMux
-	serverRight net.Conn
-	done        chan struct{}
-	closeOnce   sync.Once
+	mux       *vfs.NinePMux
+	closeOnce sync.Once
 }
 
 // srvRegistry tracks virtual sockets posted under /srv.
@@ -490,22 +311,18 @@ func newSrvRegistry() *srvRegistry {
 	return &srvRegistry{sockets: make(map[string]*srvSocket)}
 }
 
-func (r *srvRegistry) create(name string) (*srvSocket, error) {
+func (r *srvRegistry) create(name string) (*srvSocket, net.Conn, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.sockets[name]; ok {
-		return nil, os.ErrExist
+		return nil, nil, os.ErrExist
 	}
 	serverLeft, serverRight := net.Pipe()
 	m := vfs.NewNinePMux(serverLeft)
 	go m.Serve()
-	sock := &srvSocket{
-		mux:         m,
-		serverRight: serverRight,
-		done:        make(chan struct{}),
-	}
+	sock := &srvSocket{mux: m}
 	r.sockets[name] = sock
-	return sock, nil
+	return sock, serverRight, nil
 }
 
 // dial returns a client connection to the service posted under name.
@@ -526,19 +343,6 @@ func (r *srvRegistry) remove(name string) {
 	delete(r.sockets, name)
 }
 
-// openSocket dials the virtual socket at path and returns the client end of a
-// fresh independent connection. Multiple calls each yield a separate session.
-func (fs *peakNamespaceFs) openSocket(ctx context.Context, path string) (io.ReadWriteCloser, error) {
-	s := trimSlash(path)
-	if strings.HasPrefix(s, "srv/") {
-		name := s[4:]
-		if name != "" {
-			return fs.srvReg.dial(ctx, name)
-		}
-	}
-	return nil, os.ErrInvalid
-}
-
 func (r *srvRegistry) list() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -553,17 +357,13 @@ func (r *srvRegistry) list() []string {
 // the server end of the mux pipe and is used directly as an io.ReadWriteCloser
 // by ServeConn.
 type srvServerFile struct {
-	winStub
+	vfs.FileStub
 	name        string
 	sock        *srvSocket
 	serverRight net.Conn
 	reg         *srvRegistry
 }
 
-func (f *srvServerFile) Name() string { return f.name }
-func (f *srvServerFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: f.name, mode: 0600}, nil
-}
 func (f *srvServerFile) Read(p []byte) (int, error)             { return f.serverRight.Read(p) }
 func (f *srvServerFile) ReadAt(p []byte, _ int64) (int, error)  { return f.serverRight.Read(p) }
 func (f *srvServerFile) Write(p []byte) (int, error)            { return f.serverRight.Write(p) }
@@ -571,7 +371,6 @@ func (f *srvServerFile) WriteAt(p []byte, _ int64) (int, error) { return f.serve
 
 func (f *srvServerFile) Close() error {
 	f.sock.closeOnce.Do(func() {
-		close(f.sock.done)
 		f.sock.mux.Close()
 		f.serverRight.Close()
 	})
@@ -581,20 +380,16 @@ func (f *srvServerFile) Close() error {
 
 // srvDirFile serves the /srv directory listing.
 type srvDirFile struct {
-	winStub
+	vfs.FileStub
 	reg     *srvRegistry
 	entries []os.FileInfo
 	offset  int
 }
 
-func (f *srvDirFile) Name() string { return "srv" }
-func (f *srvDirFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "srv", isDir: true, mode: 0555}, nil
-}
 func (f *srvDirFile) Readdir(count int) ([]os.FileInfo, error) {
 	if f.entries == nil {
 		for _, name := range f.reg.list() {
-			f.entries = append(f.entries, &simpleFileInfo{name: name, mode: 0600})
+			f.entries = append(f.entries, vfs.NewFileInfo(name, 0600, false))
 		}
 	}
 	if count <= 0 {
@@ -603,10 +398,7 @@ func (f *srvDirFile) Readdir(count int) ([]os.FileInfo, error) {
 	if f.offset >= len(f.entries) {
 		return nil, io.EOF
 	}
-	end := f.offset + count
-	if end > len(f.entries) {
-		end = len(f.entries)
-	}
+	end := min(f.offset+count, len(f.entries))
 	res := f.entries[f.offset:end]
 	f.offset = end
 	return res, nil
@@ -625,15 +417,10 @@ func (f *srvDirFile) Readdirnames(n int) ([]string, error) {
 
 // srvConnFile wraps a client connection returned by O_RDONLY open of an /srv entry.
 type srvConnFile struct {
-	winStub
-	rwc  io.ReadWriteCloser
-	name string
+	vfs.FileStub
+	rwc io.ReadWriteCloser
 }
 
-func (f *srvConnFile) Name() string { return f.name }
-func (f *srvConnFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: f.name, mode: 0600}, nil
-}
 func (f *srvConnFile) Read(p []byte) (int, error)             { return f.rwc.Read(p) }
 func (f *srvConnFile) ReadAt(p []byte, _ int64) (int, error)  { return f.rwc.Read(p) }
 func (f *srvConnFile) Write(p []byte) (int, error)            { return f.rwc.Write(p) }

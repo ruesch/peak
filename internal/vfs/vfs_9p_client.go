@@ -8,9 +8,9 @@ import (
 	"path"
 	"time"
 
+	"github.com/aleksana/peak/internal/vfs/afero"
 	"github.com/knusbaum/go9p/client"
 	"github.com/knusbaum/go9p/proto"
-	"github.com/aleksana/peak/internal/vfs/afero"
 )
 
 // NinePClientFs implements afero.Fs by wrapping a 9P client.

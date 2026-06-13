@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/wevent"
 )
 
@@ -110,16 +111,18 @@ func (b *globalEventBus) broadcast(line string) {
 
 // ---- winEventFile ----
 
-type winEventFile struct {
-	winStub
-	win *Window
-	sub *eventSub
+func newWinEventFile(win *Window, flag int) *winEventFile {
+	var sub *eventSub
+	if flag&os.O_WRONLY == 0 {
+		sub = win.subscribeEvent()
+	}
+	return &winEventFile{win: win, sub: sub}
 }
 
-func (f *winEventFile) Name() string { return "event" }
-
-func (f *winEventFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "event", mode: 0644}, nil
+type winEventFile struct {
+	vfs.FileStub
+	win *Window
+	sub *eventSub
 }
 
 func (f *winEventFile) ReadAt(p []byte, off int64) (int, error) {
@@ -174,47 +177,26 @@ func (f *winEventFile) Close() error {
 
 // ---- winAddrFile ----
 
+func newWinAddrFile(win *Window, flag int) *winAddrFile {
+	f := &winAddrFile{win: win}
+	if flag&os.O_WRONLY == 0 {
+		win.lk.Lock()
+		f.Data = fmt.Appendf(nil, "#%d,#%d\n", win.addrQ0, win.addrQ1)
+		win.lk.Unlock()
+	}
+	return f
+}
+
 type winAddrFile struct {
-	winStub
-	win    *Window
-	snap   []byte
-	writes []byte
+	vfs.ReadWriteFile
+	win *Window
 }
-
-func (f *winAddrFile) Name() string { return "addr" }
-
-func (f *winAddrFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "addr", mode: 0644, size: int64(len(f.snap))}, nil
-}
-
-func (f *winAddrFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *winAddrFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winAddrFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winAddrFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winAddrFile) Close() error {
-	if f.writes == nil {
+	if f.Writes == nil {
 		return nil
 	}
-	s := strings.TrimSpace(string(f.writes))
+	s := strings.TrimSpace(string(f.Writes))
 	f.win.lk.Lock()
 	buf := f.win.body.GetBuffer()
 	q0, q1, err := parseAddr(s, buf)
@@ -274,50 +256,30 @@ func clampAddr(q int, buf *Buffer) int {
 
 // ---- winDataFile ----
 
+func newWinDataFile(win *Window, flag int) *winDataFile {
+	f := &winDataFile{win: win}
+	if flag&os.O_WRONLY == 0 {
+		win.lk.Lock()
+		runes := win.body.GetBuffer().RunesInRange(win.addrQ0, win.addrQ1)
+		f.Data = []byte(string(runes))
+		win.lk.Unlock()
+	}
+	return f
+}
+
 type winDataFile struct {
-	winStub
-	win    *Window
-	snap   []byte
-	writes []byte
+	vfs.ReadWriteFile
+	win *Window
 }
-
-func (f *winDataFile) Name() string { return "data" }
-
-func (f *winDataFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "data", mode: 0644, size: int64(len(f.snap))}, nil
-}
-
-func (f *winDataFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *winDataFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winDataFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winDataFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winDataFile) Close() error {
-	if f.writes == nil {
+	if f.Writes == nil {
 		return nil
 	}
 	if f.win.kind == WinTerm {
 		return nil
 	}
-	runes := []rune(string(f.writes))
+	runes := []rune(string(f.Writes))
 	f.win.lk.Lock()
 	buf := f.win.body.GetBuffer()
 	buf.ReplaceRangeRunes(f.win.addrQ0, f.win.addrQ1, runes)
@@ -334,15 +296,9 @@ func (f *winDataFile) Close() error {
 // during chunked 9P writes and the white-flash caused by clearing spans on
 // every mutation.
 type winColorFile struct {
-	winStub
+	vfs.FileStub
 	win *Window
 	buf strings.Builder
-}
-
-func (f *winColorFile) Name() string { return "color" }
-
-func (f *winColorFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "color", mode: 0200}, nil
 }
 
 func (f *winColorFile) WriteAt(p []byte, _ int64) (int, error) {
@@ -354,7 +310,7 @@ func (f *winColorFile) WriteAt(p []byte, _ int64) (int, error) {
 // window's spans atomically. An empty write clears all spans.
 func (f *winColorFile) Close() error {
 	var newSpans []colorSpan
-	for _, line := range strings.Split(f.buf.String(), "\n") {
+	for line := range strings.SplitSeq(f.buf.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

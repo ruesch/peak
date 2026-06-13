@@ -128,7 +128,7 @@ func TestGlobalEventFileSubscribesOnOpen(t *testing.T) {
 		t.Fatalf("Open(event): %v", err)
 	}
 	defer f.Close()
-	gef := f.(*globalEventFile)
+	gef := vfs.UnwrapFile(f).(*globalEventFile)
 	if gef.sub == nil {
 		t.Error("sub is nil after opening /event")
 	}
@@ -152,7 +152,7 @@ func TestGlobalEventFileReceivesLifecycleEvent(t *testing.T) {
 		t.Fatalf("Open(event): %v", err)
 	}
 	defer f.Close()
-	gef := f.(*globalEventFile)
+	gef := vfs.UnwrapFile(f).(*globalEventFile)
 	er := &eventReader{sub: gef.sub}
 
 	col.AddWindow(" /tmp/ns-lifecycle.txt Get Put Del ", "")
@@ -175,7 +175,7 @@ func TestGlobalEventFileCloseUnsubscribes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(event): %v", err)
 	}
-	gef := f.(*globalEventFile)
+	gef := vfs.UnwrapFile(f).(*globalEventFile)
 	sub := gef.sub
 
 	e.ninep.bus.mu.Lock()
@@ -210,8 +210,8 @@ func TestGlobalEventFileIndependentSubscribers(t *testing.T) {
 	}
 	defer f2.Close()
 
-	gef1 := f1.(*globalEventFile)
-	gef2 := f2.(*globalEventFile)
+	gef1 := vfs.UnwrapFile(f1).(*globalEventFile)
+	gef2 := vfs.UnwrapFile(f2).(*globalEventFile)
 	if gef1.sub == gef2.sub {
 		t.Fatal("both opens share the same sub — want independent subscribers")
 	}
@@ -238,19 +238,17 @@ func TestGlobalEventFileReadAtBlocks(t *testing.T) {
 		t.Fatalf("Open(event): %v", err)
 	}
 	defer f.Close()
-	gef := f.(*globalEventFile)
-
 	// ReadAt with no data pending should block until Close delivers EOF.
 	readDone := make(chan error, 1)
 	go func() {
 		buf := make([]byte, 32)
-		_, err := gef.ReadAt(buf, 0)
+		_, err := f.ReadAt(buf, 0)
 		readDone <- err
 	}()
 
 	// Closing the file should unblock the read with EOF.
 	time.Sleep(20 * time.Millisecond)
-	gef.Close()
+	f.Close()
 
 	select {
 	case err := <-readDone:
@@ -499,9 +497,8 @@ func TestExecFileReadBeforeWrite(t *testing.T) {
 		t.Fatalf("Open(exec): %v", err)
 	}
 	defer f.Close()
-	ef := f.(*execFile)
 	buf := make([]byte, 32)
-	n, err := ef.ReadAt(buf, 0)
+	n, err := f.ReadAt(buf, 0)
 	if n != 0 || err != io.EOF {
 		t.Errorf("ReadAt before write: n=%d err=%v, want 0/EOF", n, err)
 	}
@@ -514,11 +511,9 @@ func TestExecFileCreatesTerminalWindow(t *testing.T) {
 		t.Fatalf("Open(exec): %v", err)
 	}
 	defer f.Close()
-	ef := f.(*execFile)
-
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := ef.WriteString("my-test-window\n")
+		_, err := f.WriteString("my-test-window\n")
 		errCh <- err
 	}()
 
@@ -539,7 +534,7 @@ func TestExecFileCreatesTerminalWindow(t *testing.T) {
 
 	// Read back the window ID.
 	buf := make([]byte, 32)
-	n, _ := ef.ReadAt(buf, 0)
+	n, _ := f.ReadAt(buf, 0)
 	idStr := strings.TrimSpace(string(buf[:n]))
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
@@ -571,11 +566,9 @@ func TestExecFileDoubleWriteFails(t *testing.T) {
 		t.Fatalf("Open(exec): %v", err)
 	}
 	defer f.Close()
-	ef := f.(*execFile)
-
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := ef.WriteString("first-window\n")
+		_, err := f.WriteString("first-window\n")
 		errCh <- err
 	}()
 
@@ -593,7 +586,7 @@ func TestExecFileDoubleWriteFails(t *testing.T) {
 	}
 
 	// Second write must fail.
-	_, err = ef.WriteString("second-window\n")
+	_, err = f.WriteString("second-window\n")
 	if err != os.ErrPermission {
 		t.Errorf("second write = %v, want ErrPermission", err)
 	}
@@ -751,8 +744,8 @@ func TestSrvOpenRDWRCreatesServerFile(t *testing.T) {
 		t.Fatalf("OpenFile(srv/myconn, O_RDWR): %v", err)
 	}
 	defer f.Close()
-	if _, ok := f.(*srvServerFile); !ok {
-		t.Errorf("got %T, want *srvServerFile", f)
+	if _, ok := vfs.UnwrapFile(f).(*srvServerFile); !ok {
+		t.Errorf("got %T, want *srvServerFile", vfs.UnwrapFile(f))
 	}
 }
 
@@ -784,9 +777,9 @@ func TestSrvReadyBeforeClientMounts(t *testing.T) {
 	go vfs.NewNinePSrv(srvFs).ServeConn(f)
 
 	// Dial directly without going through Mount to verify mux is live.
-	conn, err := nsFs.openSocket(t.Context(), "srv/eager")
+	conn, err := nsFs.OpenFile("srv/eager", os.O_RDONLY, 0)
 	if err != nil {
-		t.Fatalf("openSocket: %v", err)
+		t.Fatalf("OpenFile srv/eager: %v", err)
 	}
 	defer conn.Close()
 
@@ -810,9 +803,9 @@ func TestSrvCloseRemovesFromRegistry(t *testing.T) {
 		t.Fatalf("OpenFile: %v", err)
 	}
 	f.Close()
-	_, err = nsFs.openSocket(t.Context(), "srv/temp")
+	_, err = nsFs.OpenFile("srv/temp", os.O_RDONLY, 0)
 	if err == nil {
-		t.Error("openSocket succeeded after Close, want error")
+		t.Error("OpenFile srv/temp succeeded after Close, want error")
 	}
 }
 
@@ -824,9 +817,9 @@ func TestSrvOpenSocketReturnsClientConn(t *testing.T) {
 	}
 	defer f.Close()
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(f)
-	conn, err := nsFs.openSocket(t.Context(), "srv/xfer")
+	conn, err := nsFs.OpenFile("srv/xfer", os.O_RDONLY, 0)
 	if err != nil {
-		t.Fatalf("openSocket: %v", err)
+		t.Fatalf("OpenFile srv/xfer: %v", err)
 	}
 	conn.Close()
 }
@@ -840,19 +833,19 @@ func TestSrvOpenSocketMultipleDials(t *testing.T) {
 	defer f.Close()
 	// The mux multiplexes all dials onto the one service connection.
 	go vfs.NewNinePSrv(afero.NewMemMapFs()).ServeConn(f)
-	// Each openSocket call must succeed and return a distinct connection.
-	conn1, err := nsFs.openSocket(t.Context(), "srv/multi")
+	// Each OpenFile O_RDONLY call must succeed and return a distinct connection.
+	conn1, err := nsFs.OpenFile("srv/multi", os.O_RDONLY, 0)
 	if err != nil {
-		t.Fatalf("first openSocket: %v", err)
+		t.Fatalf("first OpenFile srv/multi: %v", err)
 	}
 	defer conn1.Close()
-	conn2, err := nsFs.openSocket(t.Context(), "srv/multi")
+	conn2, err := nsFs.OpenFile("srv/multi", os.O_RDONLY, 0)
 	if err != nil {
-		t.Fatalf("second openSocket: %v", err)
+		t.Fatalf("second OpenFile srv/multi: %v", err)
 	}
 	defer conn2.Close()
 	if conn1 == conn2 {
-		t.Error("two openSocket calls returned the same connection")
+		t.Error("two OpenFile calls returned the same connection")
 	}
 }
 
@@ -869,10 +862,10 @@ func TestSrvDataFlowBidirectional(t *testing.T) {
 	defer serverF.Close()
 	go vfs.NewNinePSrv(srvFs).ServeConn(serverF)
 
-	// openSocket returns a raw 9P transport; wrap it in a NinePClientFs.
-	clientConn, err := nsFs.openSocket(t.Context(), "srv/pipe")
+	// Open the client side of the srv entry; wrap it in a NinePClientFs.
+	clientConn, err := nsFs.OpenFile("srv/pipe", os.O_RDONLY, 0)
 	if err != nil {
-		t.Fatalf("openSocket: %v", err)
+		t.Fatalf("OpenFile srv/pipe: %v", err)
 	}
 	defer clientConn.Close()
 

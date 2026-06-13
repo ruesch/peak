@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/wevent"
 	"github.com/gdamore/tcell/v2"
 )
@@ -106,8 +107,8 @@ func (r *eventReader) ReadLine(timeout time.Duration) (string, bool) {
 				acc.Write(buf[:n])
 				off += int64(n)
 				s := acc.String()
-				if idx := strings.Index(s, "\n"); idx >= 0 {
-					lineCh <- strings.TrimRight(s[:idx], "\r") + "|" + s[idx+1:]
+				if before, after, ok := strings.Cut(s, "\n"); ok {
+					lineCh <- strings.TrimRight(before, "\r") + "|" + after
 					return
 				}
 			}
@@ -134,7 +135,7 @@ func (r *eventReader) ReadLine(timeout time.Duration) (string, bool) {
 
 func TestWindowFsBodyRead(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	got := readAll(t, wfs, "body")
 	if got != "hello world\n" {
 		t.Errorf("body = %q, want %q", got, "hello world\n")
@@ -143,7 +144,7 @@ func TestWindowFsBodyRead(t *testing.T) {
 
 func TestWindowFsBodyWrite(t *testing.T) {
 	e, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	writeClose(t, wfs, "body", "new content")
 	var got string
 	e.Call(func() {
@@ -158,7 +159,7 @@ func TestWindowFsBodyWrite(t *testing.T) {
 
 func TestWindowFsTagRead(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	got := readAll(t, wfs, "tag")
 	if !strings.Contains(got, "/tmp/test.txt") {
 		t.Errorf("tag %q does not contain expected filename", got)
@@ -167,7 +168,7 @@ func TestWindowFsTagRead(t *testing.T) {
 
 func TestWindowFsTagWrite(t *testing.T) {
 	e, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	writeClose(t, wfs, "tag", " /tmp/other.txt Get Del ")
 	var got string
 	e.Call(func() {
@@ -185,7 +186,7 @@ func TestWindowFsAddrDataRoundTrip(t *testing.T) {
 	e.Call(func() {
 		win.body.GetBuffer().SetText("abcde fghij\n")
 	})
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	// Set addr to rune offsets 0–5 ("abcde")
 	writeClose(t, wfs, "addr", "#0,#5")
@@ -207,7 +208,7 @@ func TestWindowFsAddrLineNumber(t *testing.T) {
 	e.Call(func() {
 		win.body.GetBuffer().SetText("line1\nline2\nline3\n")
 	})
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	// Address "2" means line 2, rune offset 6
 	writeClose(t, wfs, "addr", "2")
@@ -225,7 +226,7 @@ func TestWindowFsAddrReadBack(t *testing.T) {
 		win.addrQ0 = 3
 		win.addrQ1 = 7
 	})
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	got := strings.TrimSpace(readAll(t, wfs, "addr"))
 	if got != "#3,#7" {
 		t.Errorf("addr = %q, want %q", got, "#3,#7")
@@ -236,7 +237,7 @@ func TestWindowFsAddrReadBack(t *testing.T) {
 
 func TestWindowFsCtlExec(t *testing.T) {
 	_, col, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	before := len(col.windows)
 	writeClose(t, wfs, "ctl", "Del")
@@ -258,7 +259,7 @@ func TestWindowFsCtlExec(t *testing.T) {
 
 func TestWindowFsCtlRead(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	// Direct windowFs path.
 	got := readAll(t, wfs, "ctl")
@@ -302,7 +303,7 @@ func TestWindowFsCtlRead(t *testing.T) {
 
 func TestWindowFsRdselNoSelection(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	got := readAll(t, wfs, "rdsel")
 	if got != "" {
 		t.Errorf("rdsel with no selection = %q, want empty", got)
@@ -318,7 +319,7 @@ func TestWindowFsRdselWithSelection(t *testing.T) {
 		buf.SetSelection(Cursor{0, 0}, Cursor{5, 0})
 	})
 
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	got := readAll(t, wfs, "rdsel")
 	if got != "hello" {
 		t.Errorf("rdsel = %q, want %q", got, "hello")
@@ -333,7 +334,7 @@ func TestWindowFsWrselReplacesSelection(t *testing.T) {
 		buf.SetSelection(Cursor{0, 0}, Cursor{5, 0})
 	})
 
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	writeClose(t, wfs, "wrsel", "goodbye")
 
 	var got string
@@ -351,7 +352,7 @@ func TestWindowFsWrselEmptyReplacesWithEmpty(t *testing.T) {
 		buf.SetSelection(Cursor{0, 0}, Cursor{5, 0})
 	})
 
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	writeClose(t, wfs, "wrsel", "")
 
 	// Empty write: writes == nil, Close is a no-op.
@@ -370,7 +371,7 @@ func TestWindowFsRdselWrselPipeRoundTrip(t *testing.T) {
 		buf.SetSelection(Cursor{0, 0}, Cursor{5, 0})
 	})
 
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	// Simulate |tr a-z A-Z: read selection, transform, write back.
 	sel := readAll(t, wfs, "rdsel")
@@ -390,7 +391,7 @@ func TestWindowFsRdselWrselPipeRoundTrip(t *testing.T) {
 
 func TestWindowFsErrorsCreatesWindow(t *testing.T) {
 	e, col, win, s := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	f, err := wfs.OpenFile("errors", os.O_WRONLY, 0)
 	if err != nil {
@@ -418,7 +419,7 @@ func TestWindowFsErrorsCreatesWindow(t *testing.T) {
 
 func TestWindowFsErrorsAppends(t *testing.T) {
 	e, col, win, s := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	write := func(msg string) {
 		f, _ := wfs.OpenFile("errors", os.O_WRONLY, 0)
@@ -470,7 +471,7 @@ func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 	// Create a text window in /tmp to write errors from
 	textWin := col.AddWindow(" /tmp/src.txt Get Put Del ", "content")
 
-	wfs := &windowFs{win: textWin}
+	wfs := newWindowFs(textWin)
 	f, _ := wfs.OpenFile("errors", os.O_WRONLY, 0)
 	f.WriteString("error output\n")
 	f.Close()
@@ -495,7 +496,7 @@ func TestWindowFsErrorsSkipsTerminalWindow(t *testing.T) {
 
 func TestWindowFsEventIDEvents(t *testing.T) {
 	e, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	f, err := wfs.OpenFile("event", os.O_RDONLY, 0)
 	if err != nil {
@@ -503,7 +504,7 @@ func TestWindowFsEventIDEvents(t *testing.T) {
 	}
 	defer f.Close()
 
-	ef := f.(*winEventFile)
+	ef := vfs.UnwrapFile(f).(*winEventFile)
 
 	// Trigger an insert via buffer edit on the main goroutine
 	e.Call(func() {
@@ -540,7 +541,7 @@ func TestWindowFsEventIDEvents(t *testing.T) {
 
 func TestWindowFsEventWriteOnlyNoSub(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	f, err := wfs.OpenFile("event", os.O_WRONLY, 0)
 	if err != nil {
@@ -548,7 +549,7 @@ func TestWindowFsEventWriteOnlyNoSub(t *testing.T) {
 	}
 	defer f.Close()
 
-	ef := f.(*winEventFile)
+	ef := vfs.UnwrapFile(f).(*winEventFile)
 	if ef.sub != nil {
 		t.Error("write-only open should not create a subscription")
 	}
@@ -559,7 +560,7 @@ func TestWindowFsEventWriteOnlyNoSub(t *testing.T) {
 
 func TestWindowFsEventSuppression(t *testing.T) {
 	e, col, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	// Open event file (read) — this subscribes and suppresses x/l actions
 	evF, err := wfs.OpenFile("event", os.O_RDONLY, 0)
@@ -595,7 +596,7 @@ func TestWindowFsEventSuppression(t *testing.T) {
 
 func TestWindowFsEventBounceback(t *testing.T) {
 	e, col, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	evF, err := wfs.OpenFile("event", os.O_RDWR, 0)
 	if err != nil {
@@ -631,7 +632,7 @@ func TestWindowFsEventBounceback(t *testing.T) {
 
 func TestWindowFsEventWriteRejectsLegacy(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 
 	evF, err := wfs.OpenFile("event", os.O_RDWR, 0)
 	if err != nil {
@@ -832,7 +833,7 @@ func TestAddrParseRuneVsByte(t *testing.T) {
 	e.Call(func() {
 		win.body.GetBuffer().SetText("héllo world\n")
 	})
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	writeClose(t, wfs, "addr", "#0,#5")
 
 	got := readAll(t, wfs, "data")
@@ -845,7 +846,7 @@ func TestAddrParseRuneVsByte(t *testing.T) {
 
 func TestWindowFsDirListing(t *testing.T) {
 	_, _, win, _ := setupWindowTest(t)
-	wfs := &windowFs{win: win}
+	wfs := newWindowFs(win)
 	f, err := wfs.Open(".")
 	if err != nil {
 		t.Fatalf("open dir: %v", err)
@@ -902,6 +903,7 @@ func TestEventScannerIntegration(t *testing.T) {
 		for sc.Scan() {
 			received <- sc.Text()
 		}
+		_ = sc.Err()
 	}()
 
 	win := col.AddWindow(" /tmp/scanner.txt Get Put Del ", "")

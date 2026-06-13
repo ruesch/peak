@@ -77,7 +77,7 @@ func (p *NineP) Listen() {
 
 // MountWindow exposes a window's namespace at /peak/<id>/.
 func (p *NineP) MountWindow(win *Window) {
-	p.vfs.Mount("/peak/"+strconv.Itoa(win.ID), &windowFs{win: win})
+	p.vfs.Mount("/peak/"+strconv.Itoa(win.ID), newWindowFs(win))
 	p.bus.broadcast(fmt.Sprintf("new %d %s\n", win.ID, win.GetFilename()))
 }
 

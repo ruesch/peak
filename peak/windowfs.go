@@ -2,252 +2,51 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
 )
 
 // windowFs implements afero.Fs for a single window's /peak/<id>/ directory.
-// Files: body (rw), tag (rw), ctl (rw), rdsel (ro), wrsel (wo).
-type windowFs struct{ win *Window }
+type windowFs struct{ *vfs.NamespaceFs }
 
-func (fs *windowFs) Stat(name string) (os.FileInfo, error) {
-	switch trimSlash(name) {
-	case "", ".":
-		return &simpleFileInfo{name: ".", isDir: true, mode: 0555}, nil
-	case "body":
-		fs.win.lk.Lock()
-		size := int64(len(fs.win.body.GetBuffer().GetText()))
-		fs.win.lk.Unlock()
-		return &simpleFileInfo{name: "body", mode: 0644, size: size}, nil
-	case "tag":
-		fs.win.lk.Lock()
-		size := int64(len(fs.win.tag.buffer.GetText()))
-		fs.win.lk.Unlock()
-		return &simpleFileInfo{name: "tag", mode: 0644, size: size}, nil
-	case "ctl":
-		snap := ctlSnap(fs.win)
-		return &simpleFileInfo{name: "ctl", mode: 0600, size: int64(len(snap))}, nil
-	case "event":
-		return &simpleFileInfo{name: "event", mode: 0644}, nil
-	case "addr":
-		fs.win.lk.Lock()
-		snap := []byte(fmt.Sprintf("#%d,#%d\n", fs.win.addrQ0, fs.win.addrQ1))
-		fs.win.lk.Unlock()
-		return &simpleFileInfo{name: "addr", mode: 0644, size: int64(len(snap))}, nil
-	case "data":
-		fs.win.lk.Lock()
-		runes := fs.win.body.GetBuffer().RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
-		size := int64(len([]byte(string(runes))))
-		fs.win.lk.Unlock()
-		return &simpleFileInfo{name: "data", mode: 0644, size: size}, nil
-	case "rdsel":
-		var snap []byte
-		fs.win.lk.Lock()
-		buf := fs.win.body.GetBuffer()
-		if buf.selection.Active {
-			start, end := buf.selection.Ordered()
-			q0 := buf.RuneOffsetOfPos(start.y, start.x)
-			q1 := buf.RuneOffsetOfPos(end.y, end.x)
-			snap = []byte(string(buf.RunesInRange(q0, q1)))
-		}
-		fs.win.lk.Unlock()
-		return &simpleFileInfo{name: "rdsel", mode: 0444, size: int64(len(snap))}, nil
-	case "wrsel":
-		return &simpleFileInfo{name: "wrsel", mode: 0200}, nil
-	case "errors":
-		return &simpleFileInfo{name: "errors", mode: 0200}, nil
-	case "color":
-		return &simpleFileInfo{name: "color", mode: 0200}, nil
-	case "io":
-		if fs.win.kind == WinTerm {
-			if fs.win.body.(*TermView).externalPTY() != nil {
-				return &simpleFileInfo{name: "io", mode: 0600}, nil
-			}
-		}
-	}
-	return nil, os.ErrNotExist
-}
-
-func (fs *windowFs) Open(name string) (afero.File, error) {
-	return fs.OpenFile(name, os.O_RDONLY, 0)
-}
-
-func (fs *windowFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	switch trimSlash(name) {
-	case "", ".":
-		return &winDirFile{win: fs.win}, nil
-	case "body":
-		f := &winBodyFile{win: fs.win}
-		if flag&os.O_WRONLY == 0 {
-			fs.win.lk.Lock()
-			f.snap = []byte(fs.win.body.GetBuffer().GetText())
-			fs.win.bodySnapSeq = fs.win.mutSeq
-			fs.win.lk.Unlock()
-		}
-		return f, nil
-	case "tag":
-		f := &winTagFile{win: fs.win}
-		if flag&os.O_WRONLY == 0 {
-			fs.win.lk.Lock()
-			f.snap = []byte(fs.win.tag.buffer.GetText())
-			fs.win.lk.Unlock()
-		}
-		return f, nil
-	case "ctl":
-		f := &winCtlFile{win: fs.win}
-		if flag&os.O_WRONLY == 0 {
-			f.snap = ctlSnap(fs.win)
-		}
-		return f, nil
-	case "event":
-		var sub *eventSub
-		if flag&os.O_WRONLY == 0 {
-			sub = fs.win.subscribeEvent()
-		}
-		return &winEventFile{win: fs.win, sub: sub}, nil
-	case "addr":
-		f := &winAddrFile{win: fs.win}
-		if flag&os.O_WRONLY == 0 {
-			fs.win.lk.Lock()
-			f.snap = []byte(fmt.Sprintf("#%d,#%d\n", fs.win.addrQ0, fs.win.addrQ1))
-			fs.win.lk.Unlock()
-		}
-		return f, nil
-	case "data":
-		f := &winDataFile{win: fs.win}
-		if flag&os.O_WRONLY == 0 {
-			fs.win.lk.Lock()
-			runes := fs.win.body.GetBuffer().RunesInRange(fs.win.addrQ0, fs.win.addrQ1)
-			f.snap = []byte(string(runes))
-			fs.win.lk.Unlock()
-		}
-		return f, nil
-	case "rdsel":
-		f := &winRdselFile{win: fs.win}
-		fs.win.lk.Lock()
-		buf := fs.win.body.GetBuffer()
-		if buf.selection.Active {
-			start, end := buf.selection.Ordered()
-			q0 := buf.RuneOffsetOfPos(start.y, start.x)
-			q1 := buf.RuneOffsetOfPos(end.y, end.x)
-			f.snap = []byte(string(buf.RunesInRange(q0, q1)))
-		}
-		fs.win.lk.Unlock()
-		return f, nil
-	case "wrsel":
-		f := &winWrselFile{win: fs.win}
-		fs.win.lk.Lock()
-		buf := fs.win.body.GetBuffer()
-		if buf.selection.Active {
-			start, end := buf.selection.Ordered()
-			f.q0 = buf.RuneOffsetOfPos(start.y, start.x)
-			f.q1 = buf.RuneOffsetOfPos(end.y, end.x)
-		}
-		fs.win.lk.Unlock()
-		return f, nil
-	case "errors":
-		return &winErrorsFile{win: fs.win}, nil
-	case "color":
-		return &winColorFile{win: fs.win}, nil
-	case "io":
-		if fs.win.kind == WinTerm {
-			if pty := fs.win.body.(*TermView).externalPTY(); pty != nil {
-				return &winIoFile{pty: pty}, nil
-			}
-		}
-	}
-	return nil, os.ErrNotExist
-}
-
-// trimSlash strips leading slashes for name lookup.
-func trimSlash(name string) string {
-	return strings.TrimLeft(name, "/")
-}
-
-// Unsupported mutations.
-func (fs *windowFs) Create(name string) (afero.File, error)       { return nil, os.ErrPermission }
-func (fs *windowFs) Mkdir(name string, perm os.FileMode) error    { return os.ErrPermission }
-func (fs *windowFs) MkdirAll(path string, perm os.FileMode) error { return os.ErrPermission }
-func (fs *windowFs) Remove(name string) error                     { return os.ErrPermission }
-func (fs *windowFs) RemoveAll(path string) error                  { return os.ErrPermission }
-func (fs *windowFs) Rename(oldname, newname string) error         { return os.ErrPermission }
-func (fs *windowFs) Chmod(name string, mode os.FileMode) error    { return os.ErrPermission }
-func (fs *windowFs) Chown(name string, uid, gid int) error        { return os.ErrPermission }
-func (fs *windowFs) Chtimes(name string, a, m time.Time) error    { return os.ErrPermission }
-func (fs *windowFs) Name() string                                 { return "windowFs" }
-
-// ---- stub base ----
-
-// winStub provides no-op implementations of the afero.File interface.
-// Concrete types embed it and override only what they need.
-type winStub struct{}
-
-func (winStub) Close() error                              { return nil }
-func (winStub) Read(p []byte) (int, error)                { return 0, io.EOF }
-func (winStub) ReadAt(p []byte, off int64) (int, error)   { return 0, io.EOF }
-func (winStub) Seek(off int64, whence int) (int64, error) { return 0, nil }
-func (winStub) Write(p []byte) (int, error)               { return 0, os.ErrPermission }
-func (winStub) WriteAt(p []byte, off int64) (int, error)  { return 0, os.ErrPermission }
-func (winStub) WriteString(s string) (int, error)         { return 0, os.ErrPermission }
-func (winStub) Name() string                              { return "" }
-func (winStub) Readdir(n int) ([]os.FileInfo, error)      { return nil, nil }
-func (winStub) Readdirnames(n int) ([]string, error)      { return nil, nil }
-func (winStub) Stat() (os.FileInfo, error)                { return nil, os.ErrNotExist }
-func (winStub) Sync() error                               { return nil }
-func (winStub) Truncate(size int64) error                 { return nil }
-
-// ---- directory ----
-
-type winDirFile struct {
-	winStub
-	win *Window
-}
-
-func (f *winDirFile) Name() string { return "." }
-
-func (f *winDirFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: ".", isDir: true, mode: 0555}, nil
-}
-
-func (f *winDirFile) Readdir(count int) ([]os.FileInfo, error) {
-	all := []os.FileInfo{
-		&simpleFileInfo{name: "body", mode: 0644},
-		&simpleFileInfo{name: "tag", mode: 0644},
-		&simpleFileInfo{name: "ctl", mode: 0600},
-		&simpleFileInfo{name: "event", mode: 0644},
-		&simpleFileInfo{name: "addr", mode: 0644},
-		&simpleFileInfo{name: "data", mode: 0644},
-		&simpleFileInfo{name: "rdsel", mode: 0444},
-		&simpleFileInfo{name: "wrsel", mode: 0200},
-		&simpleFileInfo{name: "errors", mode: 0200},
-		&simpleFileInfo{name: "color", mode: 0200},
-	}
-	if f.win.kind == WinTerm {
-		if f.win.body.(*TermView).externalPTY() != nil {
-			all = append(all, &simpleFileInfo{name: "io", mode: 0600})
-		}
-	}
-	if count > 0 && count < len(all) {
-		return all[:count], nil
-	}
-	return all, nil
+func newWindowFs(win *Window) *windowFs {
+	return &windowFs{&vfs.NamespaceFs{
+		Entries: []vfs.FileEntry{
+			{Name: "body", Mode: 0644, Open: func(flag int) (afero.File, error) { return newWinBodyFile(win, flag), nil }},
+			{Name: "tag", Mode: 0644, Open: func(flag int) (afero.File, error) { return newWinTagFile(win, flag), nil }},
+			{Name: "ctl", Mode: 0600, Open: func(flag int) (afero.File, error) { return newWinCtlFile(win, flag), nil }},
+			{Name: "event", Mode: 0644, Open: func(flag int) (afero.File, error) { return newWinEventFile(win, flag), nil }},
+			{Name: "addr", Mode: 0644, Open: func(flag int) (afero.File, error) { return newWinAddrFile(win, flag), nil }},
+			{Name: "data", Mode: 0644, Open: func(flag int) (afero.File, error) { return newWinDataFile(win, flag), nil }},
+			{Name: "rdsel", Mode: 0444, Open: func(_ int) (afero.File, error) { return newWinRdselFile(win), nil }},
+			{Name: "wrsel", Mode: 0200, Open: func(_ int) (afero.File, error) { return newWinWrselFile(win), nil }},
+			{Name: "errors", Mode: 0200, Open: func(_ int) (afero.File, error) { return &winErrorsFile{win: win}, nil }},
+			{Name: "color", Mode: 0200, Open: func(_ int) (afero.File, error) { return &winColorFile{win: win}, nil }},
+			{Name: "io", Mode: 0600,
+				Active: func() bool { return win.kind == WinTerm && win.body.(*TermView).externalPTY() != nil },
+				Open:   func(_ int) (afero.File, error) { return newWinIoFile(win) },
+			},
+		},
+	}}
 }
 
 // ---- io file (ExternalPTY windows only) ----
 
+func newWinIoFile(win *Window) (afero.File, error) {
+	if pty := win.body.(*TermView).externalPTY(); pty != nil {
+		return &winIoFile{pty: pty}, nil
+	}
+	return nil, os.ErrNotExist
+}
+
 type winIoFile struct {
-	winStub
+	vfs.FileStub
 	pty *ExternalPTY
 }
 
-func (f *winIoFile) Name() string { return "io" }
-func (f *winIoFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "io", mode: 0600}, nil
-}
 func (f *winIoFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.pty.ReadInput(p, off)
 }
@@ -263,53 +62,32 @@ func (f *winIoFile) Close() error {
 
 // ---- body ----
 
+func newWinBodyFile(win *Window, flag int) *winBodyFile {
+	f := &winBodyFile{win: win}
+	if flag&os.O_WRONLY == 0 {
+		win.lk.Lock()
+		f.Data = []byte(win.body.GetBuffer().GetText())
+		win.bodySnapSeq = win.mutSeq
+		win.lk.Unlock()
+	}
+	return f
+}
+
 type winBodyFile struct {
-	winStub
-	win    *Window
-	snap   []byte // snapshot at open time
-	writes []byte // accumulated write data (nil = no writes)
+	vfs.ReadWriteFile
+	win *Window
 }
-
-func (f *winBodyFile) Name() string { return "body" }
-
-func (f *winBodyFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "body", mode: 0644, size: int64(len(f.snap))}, nil
-}
-
-func (f *winBodyFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *winBodyFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winBodyFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winBodyFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winBodyFile) Close() error {
-	if f.writes == nil {
+	if f.Writes == nil {
 		return nil
 	}
 	if f.win.kind == WinTerm {
-		f.win.body.(*TermView).session.Write(f.writes)
+		f.win.body.(*TermView).session.Write(f.Writes)
 		return nil
 	}
-	text := string(f.writes)
 	f.win.lk.Lock()
-	f.win.body.GetBuffer().SetText(text)
+	f.win.body.GetBuffer().SetText(string(f.Writes))
 	f.win.lk.Unlock()
 	f.win.editor.Redraw()
 	return nil
@@ -317,49 +95,27 @@ func (f *winBodyFile) Close() error {
 
 // ---- tag ----
 
+func newWinTagFile(win *Window, flag int) *winTagFile {
+	f := &winTagFile{win: win}
+	if flag&os.O_WRONLY == 0 {
+		win.lk.Lock()
+		f.Data = []byte(win.tag.buffer.GetText())
+		win.lk.Unlock()
+	}
+	return f
+}
+
 type winTagFile struct {
-	winStub
-	win    *Window
-	snap   []byte
-	writes []byte
+	vfs.ReadWriteFile
+	win *Window
 }
-
-func (f *winTagFile) Name() string { return "tag" }
-
-func (f *winTagFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "tag", mode: 0644, size: int64(len(f.snap))}, nil
-}
-
-func (f *winTagFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-func (f *winTagFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winTagFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winTagFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winTagFile) Close() error {
-	if f.writes == nil {
+	if f.Writes == nil {
 		return nil
 	}
-	text := string(f.writes)
 	f.win.lk.Lock()
-	f.win.tag.buffer.SetText(text)
+	f.win.tag.buffer.SetText(string(f.Writes))
 	f.win.lk.Unlock()
 	f.win.editor.Redraw()
 	return nil
@@ -388,35 +144,25 @@ func ctlSnap(win *Window) []byte {
 		maxtab = tv.tabWidth
 	}
 	win.lk.Unlock()
-	return []byte(fmt.Sprintf("%d %d %d %d %d %d terminal %d\n",
-		win.ID, tagLen, bodyLen, isDir, isDirty, width, maxtab))
+	return fmt.Appendf(nil, "%d %d %d %d %d %d terminal %d\n",
+		win.ID, tagLen, bodyLen, isDir, isDirty, width, maxtab)
+}
+
+func newWinCtlFile(win *Window, flag int) *winCtlFile {
+	f := &winCtlFile{win: win}
+	if flag&os.O_WRONLY == 0 {
+		f.Data = ctlSnap(win)
+	}
+	return f
 }
 
 type winCtlFile struct {
-	winStub
-	win  *Window
-	snap []byte
-}
-
-func (f *winCtlFile) Name() string { return "ctl" }
-
-func (f *winCtlFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "ctl", mode: 0600, size: int64(len(f.snap))}, nil
-}
-
-func (f *winCtlFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
+	vfs.ReadonlyFile
+	win *Window
 }
 
 // WriteAt executes the trimmed string as an editor command.
-func (f *winCtlFile) WriteAt(p []byte, off int64) (int, error) {
+func (f *winCtlFile) WriteAt(p []byte, _ int64) (int, error) {
 	cmd := strings.TrimSpace(string(p))
 	if cmd == "" {
 		return len(p), nil
@@ -430,67 +176,56 @@ func (f *winCtlFile) WriteString(s string) (int, error) { return f.WriteAt([]byt
 
 // ---- rdsel ----
 
+func newWinRdselFile(win *Window) *winRdselFile {
+	f := &winRdselFile{}
+	win.lk.Lock()
+	buf := win.body.GetBuffer()
+	if buf.selection.Active {
+		start, end := buf.selection.Ordered()
+		q0 := buf.RuneOffsetOfPos(start.y, start.x)
+		q1 := buf.RuneOffsetOfPos(end.y, end.x)
+		f.Data = []byte(string(buf.RunesInRange(q0, q1)))
+	}
+	win.lk.Unlock()
+	return f
+}
+
 // winRdselFile is a read-only snapshot of the window's current selection at open time.
 type winRdselFile struct {
-	winStub
-	win  *Window
-	snap []byte
-}
-
-func (f *winRdselFile) Name() string { return "rdsel" }
-
-func (f *winRdselFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "rdsel", mode: 0444, size: int64(len(f.snap))}, nil
-}
-
-func (f *winRdselFile) ReadAt(p []byte, off int64) (int, error) {
-	if off >= int64(len(f.snap)) {
-		return 0, io.EOF
-	}
-	n := copy(p, f.snap[off:])
-	if off+int64(n) >= int64(len(f.snap)) {
-		return n, io.EOF
-	}
-	return n, nil
+	vfs.ReadonlyFile
 }
 
 // ---- wrsel ----
 
+func newWinWrselFile(win *Window) *winWrselFile {
+	f := &winWrselFile{win: win}
+	win.lk.Lock()
+	buf := win.body.GetBuffer()
+	if buf.selection.Active {
+		start, end := buf.selection.Ordered()
+		f.q0 = buf.RuneOffsetOfPos(start.y, start.x)
+		f.q1 = buf.RuneOffsetOfPos(end.y, end.x)
+	}
+	win.lk.Unlock()
+	return f
+}
+
 // winWrselFile is a write-only file; on Close it replaces the selection captured at
 // open time with the written bytes.
 type winWrselFile struct {
-	winStub
+	vfs.WriteOnlyFile
 	win    *Window
 	q0, q1 int
-	writes []byte
 }
-
-func (f *winWrselFile) Name() string { return "wrsel" }
-
-func (f *winWrselFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "wrsel", mode: 0200}, nil
-}
-
-func (f *winWrselFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winWrselFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winWrselFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winWrselFile) Close() error {
-	if f.writes == nil {
+	if f.Writes == nil {
 		return nil
 	}
 	if f.win.kind == WinTerm {
 		return nil
 	}
-	runes := []rune(string(f.writes))
+	runes := []rune(string(f.Writes))
 	f.win.lk.Lock()
 	f.win.body.GetBuffer().ReplaceRangeRunes(f.q0, f.q1, runes)
 	f.win.lk.Unlock()
@@ -501,63 +236,14 @@ func (f *winWrselFile) Close() error {
 // ---- errors ----
 
 type winErrorsFile struct {
-	winStub
-	win    *Window
-	writes []byte
+	vfs.WriteOnlyFile
+	win *Window
 }
-
-func (f *winErrorsFile) Name() string { return "errors" }
-func (f *winErrorsFile) Stat() (os.FileInfo, error) {
-	return &simpleFileInfo{name: "errors", mode: 0200}, nil
-}
-
-func (f *winErrorsFile) WriteAt(p []byte, off int64) (int, error) {
-	end := int(off) + len(p)
-	if end > len(f.writes) {
-		f.writes = append(f.writes, make([]byte, end-len(f.writes))...)
-	}
-	copy(f.writes[off:], p)
-	return len(p), nil
-}
-
-func (f *winErrorsFile) Write(p []byte) (int, error)       { return f.WriteAt(p, 0) }
-func (f *winErrorsFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(s), 0) }
 
 func (f *winErrorsFile) Close() error {
-	if len(f.writes) == 0 {
+	if len(f.Writes) == 0 {
 		return nil
 	}
-	msg := string(f.writes)
-	f.win.editor.execCh <- execReq{col: f.win.parent, win: f.win, text: msg, kind: 'e'}
+	f.win.editor.execCh <- execReq{col: f.win.parent, win: f.win, text: string(f.Writes), kind: 'e'}
 	return nil
-}
-
-// ---- simpleFileInfo ----
-
-type simpleFileInfo struct {
-	name    string
-	isDir   bool
-	size    int64
-	mode    os.FileMode
-	modTime time.Time
-}
-
-func (s *simpleFileInfo) Name() string       { return s.name }
-func (s *simpleFileInfo) Size() int64        { return s.size }
-func (s *simpleFileInfo) IsDir() bool        { return s.isDir }
-func (s *simpleFileInfo) ModTime() time.Time { return s.modTime }
-func (s *simpleFileInfo) Sys() interface{}   { return nil }
-func (s *simpleFileInfo) Mode() os.FileMode {
-	mode := s.mode.Perm()
-	if mode == 0 {
-		if s.isDir {
-			mode = 0755
-		} else {
-			mode = 0644
-		}
-	}
-	if s.isDir {
-		return os.ModeDir | mode
-	}
-	return mode
 }

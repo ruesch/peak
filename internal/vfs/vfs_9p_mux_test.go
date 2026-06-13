@@ -50,7 +50,7 @@ func dialMux(t *testing.T, m *NinePMux) *NinePClientFs {
 func TestMuxStat(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/hello.txt", "hello")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	fi, err := cli.Stat("/hello.txt")
 	if err != nil {
@@ -67,7 +67,7 @@ func TestMuxStat(t *testing.T) {
 func TestMuxReadFile(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/data.txt", "hello world")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	got, err := afero.ReadFile(cli, "/data.txt")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestMuxReadFile(t *testing.T) {
 
 func TestMuxWriteFile(t *testing.T) {
 	mem := afero.NewMemMapFs()
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	if err := afero.WriteFile(cli, "/out.txt", []byte("via mux"), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -99,7 +99,7 @@ func TestMuxReaddir(t *testing.T) {
 	mustMkdirAll(t, mem, "/d")
 	mustWriteFile(t, mem, "/d/a.txt", "a")
 	mustWriteFile(t, mem, "/d/b.txt", "b")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	infos, err := afero.ReadDir(cli, "/d")
 	if err != nil {
@@ -114,7 +114,7 @@ func TestMuxReaddir(t *testing.T) {
 
 func TestMuxMkdirAndStat(t *testing.T) {
 	mem := afero.NewMemMapFs()
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	if err := cli.Mkdir("/newdir", 0755); err != nil {
 		t.Fatalf("Mkdir: %v", err)
@@ -131,7 +131,7 @@ func TestMuxMkdirAndStat(t *testing.T) {
 func TestMuxRemove(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/bye.txt", "bye")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	if err := cli.Remove("/bye.txt"); err != nil {
 		t.Fatalf("Remove: %v", err)
@@ -145,7 +145,7 @@ func TestMuxLargeRead(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	data := strings.Repeat("x", 128*1024)
 	mustWriteFile(t, mem, "/big.txt", data)
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	got, err := afero.ReadFile(cli, "/big.txt")
 	if err != nil {
@@ -163,8 +163,8 @@ func TestMuxTwoClientsIndependent(t *testing.T) {
 	mustWriteFile(t, mem, "/a.txt", "from a")
 	mustWriteFile(t, mem, "/b.txt", "from b")
 	m := newMuxPair(t, mem)
-	c1 := dialMux(t,m)
-	c2 := dialMux(t,m)
+	c1 := dialMux(t, m)
+	c2 := dialMux(t, m)
 
 	got1, err := afero.ReadFile(c1, "/a.txt")
 	if err != nil {
@@ -185,8 +185,8 @@ func TestMuxTwoClientsIndependent(t *testing.T) {
 func TestMuxTwoClientsSeeSameFS(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	m := newMuxPair(t, mem)
-	c1 := dialMux(t,m)
-	c2 := dialMux(t,m)
+	c1 := dialMux(t, m)
+	c2 := dialMux(t, m)
 
 	if err := afero.WriteFile(c1, "/shared.txt", []byte("written by c1"), 0644); err != nil {
 		t.Fatalf("c1 WriteFile: %v", err)
@@ -208,8 +208,8 @@ func TestMuxFidNamespacesIsolated(t *testing.T) {
 	mustWriteFile(t, mem, "/x.txt", "xxx")
 	mustWriteFile(t, mem, "/y.txt", "yyy")
 	m := newMuxPair(t, mem)
-	c1 := dialMux(t,m)
-	c2 := dialMux(t,m)
+	c1 := dialMux(t, m)
+	c2 := dialMux(t, m)
 
 	// Keep both files open concurrently.
 	f1, err := c1.Open("/x.txt")
@@ -251,7 +251,7 @@ func TestMuxConcurrentReads(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < nClients; i++ {
-		cli := dialMux(t,m)
+		cli := dialMux(t, m)
 		wg.Add(1)
 		go func(c *NinePClientFs) {
 			defer wg.Done()
@@ -278,7 +278,7 @@ func TestMuxConcurrentWrites(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < nClients; i++ {
-		cli := dialMux(t,m)
+		cli := dialMux(t, m)
 		name := strings.Repeat(string(rune('a'+i)), 1)
 		wg.Add(1)
 		go func(c *NinePClientFs, fname string) {
@@ -327,11 +327,11 @@ func TestMuxClientAbruptDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bad.Open: %v", err)
 	}
-	_ = f // intentionally not closed
+	_ = f        // intentionally not closed
 	conn.Close() // abrupt disconnect; file fids remain un-clunked on client side
 
 	// Second client: must still be able to operate normally.
-	c2 := dialMux(t,m)
+	c2 := dialMux(t, m)
 	got, err := afero.ReadFile(c2, "/hello.txt")
 	if err != nil {
 		t.Fatalf("c2 ReadFile after disconnect: %v", err)
@@ -408,8 +408,8 @@ func TestMuxVersionAnsweredLocally(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/ok", "ok")
 	m := newMuxPair(t, mem)
-	c1 := dialMux(t,m)
-	c2 := dialMux(t,m)
+	c1 := dialMux(t, m)
+	c2 := dialMux(t, m)
 
 	// Both clients must work even though only one Tversion reached the server.
 	for _, c := range []*NinePClientFs{c1, c2} {
@@ -441,7 +441,7 @@ func TestMuxMultipleClientsMountSameService(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cli := dialMux(t,m)
+			cli := dialMux(t, m)
 			got, err := afero.ReadFile(cli, "/data/shared")
 			if err != nil {
 				t.Errorf("ReadFile: %v", err)
@@ -462,7 +462,7 @@ func TestMuxStatOpenerUsedThroughMux(t *testing.T) {
 	mustWriteFile(t, mem, "/f.txt", "data")
 	spy := &statOpenerFs{recordingFs: recordingFs{Fs: mem}}
 	m := newMuxPair(t, spy)
-	cli := dialMux(t,m)
+	cli := dialMux(t, m)
 
 	got, err := afero.ReadFile(cli, "/f.txt")
 	if err != nil {
@@ -491,7 +491,7 @@ func TestMuxLargeDir(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 	}
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	f, err := cli.Open("/big")
 	if err != nil {
@@ -514,7 +514,7 @@ func TestMuxFidPoolReclaim(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/f.txt", "x")
 	m := newMuxPair(t, mem)
-	cli := dialMux(t,m)
+	cli := dialMux(t, m)
 
 	// Open and close the file many times to cycle through fids.
 	for i := 0; i < 200; i++ {
@@ -585,7 +585,7 @@ func TestMuxSrvServerFileCloseTeardown(t *testing.T) {
 func TestMuxErrorPropagated(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	m := newMuxPair(t, mem)
-	cli := dialMux(t,m)
+	cli := dialMux(t, m)
 
 	_, err := cli.Stat("/nonexistent")
 	if err == nil {
@@ -597,7 +597,7 @@ func TestMuxErrorPropagated(t *testing.T) {
 func TestMuxRenameFile(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/old.txt", "data")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	if err := cli.Rename("/old.txt", "/new.txt"); err != nil {
 		t.Fatalf("Rename: %v", err)
@@ -614,7 +614,7 @@ func TestMuxRenameFile(t *testing.T) {
 func TestMuxChmod(t *testing.T) {
 	mem := afero.NewMemMapFs()
 	mustWriteFile(t, mem, "/f.txt", "x")
-	cli := dialMux(t,newMuxPair(t, mem))
+	cli := dialMux(t, newMuxPair(t, mem))
 
 	if err := cli.Chmod("/f.txt", 0600); err != nil {
 		t.Fatalf("Chmod: %v", err)
