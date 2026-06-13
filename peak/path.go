@@ -72,12 +72,12 @@ func normalizePath(path, base string) string {
 	}
 	if fi, err := getVFS().Stat(abs); err == nil {
 		if fi.IsDir() {
-			return abs + "/"
+			return toDir(abs)
 		}
 		return abs
 	}
 	if trailingSlash {
-		return abs + "/"
+		return toDir(abs)
 	}
 	return abs
 }
