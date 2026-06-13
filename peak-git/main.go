@@ -160,11 +160,11 @@ func startAndBindRepo(peakFs afero.Fs, repoPath string) (afero.File, string, err
 		serverF.Close()
 		return nil, "", fmt.Errorf("/mount: %w", err)
 	}
-	// Mount under peak's namespace: /peak/<name> (auto-prefixed by peak).
-	fmt.Fprintf(mountF, "/peak/srv/%s /peak/%s\n", name, name)
+	mountPath := repoPath + "/.git/fs"
+	fmt.Fprintf(mountF, "/peak/srv/%s %s\n", name, mountPath)
 	mountF.Close()
 
-	return serverF, "/peak/" + name, nil
+	return serverF, mountPath, nil
 }
 
 func unbindRepo(peakFs afero.Fs, mountPath string) {

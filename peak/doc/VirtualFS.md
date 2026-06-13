@@ -108,9 +108,9 @@ it alongside Peak:
     peak-git
 
 peak-git watches window lifecycle events. When a window opens a file
-inside a git repository, it auto-mounts that repository's VFS under
-/peak/git-<id>/ (where id is derived from the repository path). The
-mount is removed when the last window from that repository is closed.
+inside a git repository, it mounts that repository's VFS at
+<repo>/.git/fs/. The mount is removed when the last window from that
+repository is closed.
 
 Each mounted repository exposes:
 
