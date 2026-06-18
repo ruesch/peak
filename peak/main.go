@@ -36,22 +36,11 @@ type Theme struct {
 	SynError    tcell.Color
 }
 
-// execReq is a non-blocking request for the UI thread to run an executive
-// operation: execute a command, plumb a string, or append to the error window.
-type execReq struct {
-	col  *Column
-	win  *Window
-	text string
-	kind byte // 'x'=Execute, 'l'=Plumb, 'e'=appendToErrorWindow
-}
-
 // Editor is the main application state.
 type Editor struct {
 	TreeNode
-	CmdChan       chan func()
 	redrawCh      chan struct{} // capacity-1; 9P goroutines signal after state changes
-	execCh        chan execReq  // buffered; 9P goroutines send executive ops here
-	callCh        chan func()   // buffered; background goroutines dispatch fire-and-forget UI callbacks
+	callCh        chan func()   // buffered; background goroutines dispatch UI callbacks
 	screen        tcell.Screen
 	tag           *TextView
 	columns       []*Column
@@ -94,7 +83,7 @@ func (e *Editor) Redraw() {
 
 func (e *Editor) Call(f func()) {
 	done := make(chan struct{})
-	e.CmdChan <- func() {
+	e.callCh <- func() {
 		f()
 		close(done)
 	}
@@ -111,9 +100,7 @@ func (e *Editor) Init(numCols int, args []string) {
 		log.SetOutput(logFile)
 	}
 
-	e.CmdChan = make(chan func())
 	e.redrawCh = make(chan struct{}, 1)
-	e.execCh = make(chan execReq, 8)
 	e.callCh = make(chan func(), 16)
 	e.nextWinID = 1
 	e.ninep = NewNineP(e)
@@ -208,28 +195,9 @@ func (e *Editor) Run() {
 			}
 			fn()
 			e.Draw()
-		case fn := <-e.CmdChan:
-			if timer != nil {
-				timer.Stop()
-			}
-			fn()
-			e.Draw()
 		case <-e.redrawCh:
 			if timer != nil {
 				timer.Stop()
-			}
-			e.Draw()
-		case req := <-e.execCh:
-			if timer != nil {
-				timer.Stop()
-			}
-			switch req.kind {
-			case 'x':
-				req.win.onExec(req.col, req.win, req.text)
-			case 'l':
-				e.Plumb(req.win, req.text)
-			case 'e':
-				e.appendToErrorWindow(req.col, req.win, req.text)
 			}
 			e.Draw()
 		case <-tick:

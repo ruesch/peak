@@ -167,7 +167,8 @@ func (f *winCtlFile) WriteAt(p []byte, _ int64) (int, error) {
 	if cmd == "" {
 		return len(p), nil
 	}
-	f.win.editor.execCh <- execReq{col: f.win.parent, win: f.win, text: cmd, kind: 'x'}
+	win, col := f.win, f.win.parent
+	win.editor.callCh <- func() { win.onExec(col, win, cmd) }
 	return len(p), nil
 }
 
@@ -244,6 +245,7 @@ func (f *winErrorsFile) Close() error {
 	if len(f.Writes) == 0 {
 		return nil
 	}
-	f.win.editor.execCh <- execReq{col: f.win.parent, win: f.win, text: string(f.Writes), kind: 'e'}
+	win, col, text := f.win, f.win.parent, string(f.Writes)
+	win.editor.callCh <- func() { win.editor.appendToErrorWindow(col, win, text) }
 	return nil
 }

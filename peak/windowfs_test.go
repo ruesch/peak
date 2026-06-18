@@ -242,7 +242,6 @@ func TestWindowFsCtlExec(t *testing.T) {
 	before := len(col.windows)
 	writeClose(t, wfs, "ctl", "Del")
 
-	// execCh is processed asynchronously; poll until the window is gone.
 	deadline := time.After(time.Second)
 	for {
 		if len(col.windows) == before-1 {
@@ -620,7 +619,6 @@ func TestWindowFsEventBounceback(t *testing.T) {
 		t.Fatalf("write v2 event: %v", err)
 	}
 
-	// execCh is async; wait for onExec to be called.
 	select {
 	case <-done:
 	case <-time.After(time.Second):

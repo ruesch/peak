@@ -66,9 +66,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.Screen) {
 	}
 	e := &Editor{
 		screen:   s,
-		CmdChan:  make(chan func()),
 		redrawCh: make(chan struct{}, 1),
-		execCh:   make(chan execReq, 8),
 		callCh:   make(chan func(), 16),
 	}
 	appEditor = e
@@ -77,30 +75,6 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.Screen) {
 		t.Fatalf("ApplyTheme: %v", err)
 	}
 	e.w, e.h = w, h
-
-	go func() {
-		for fn := range e.CmdChan {
-			fn()
-		}
-	}()
-
-	go func() {
-		for req := range e.execCh {
-			switch req.kind {
-			case 'x':
-				req.win.onExec(req.col, req.win, req.text)
-			case 'l':
-				e.Plumb(req.win, req.text)
-			case 'e':
-				e.appendToErrorWindow(req.col, req.win, req.text)
-			}
-			// Wake up any waitFor loops so they can recheck their condition.
-			select {
-			case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
-			default:
-			}
-		}
-	}()
 
 	go func() {
 		for fn := range e.callCh {
