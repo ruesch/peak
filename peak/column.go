@@ -8,6 +8,7 @@ import (
 
 	"github.com/aleksana/peak/internal/session"
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 type Gutter struct {
@@ -18,13 +19,13 @@ type Gutter struct {
 func (g *Gutter) Layout() {}
 func (g *Gutter) Draw(s tcell.Screen) {
 	sepStyle := tcell.StyleDefault.Background(g.theme.ScrollGutter).Foreground(g.theme.HandleColumn)
-	handleStyle := tcell.StyleDefault.Background(g.theme.HandleColumn).Foreground(tcell.ColorBlack)
+	handleStyle := tcell.StyleDefault.Background(g.theme.HandleColumn).Foreground(color.Black)
 	for y := g.y; y < g.y+g.h; y++ {
 		style := sepStyle
 		if y == g.y {
 			style = handleStyle
 		}
-		s.SetContent(g.x, y, ' ', nil, style)
+		s.Put(g.x, y, " ", style)
 	}
 }
 func (g *Gutter) Resize(x, y, w, h int) { g.x, g.y, g.w, g.h = x, y, w, h }
@@ -52,17 +53,10 @@ func (c *Column) WalkLayout() {
 }
 
 func (c *Column) WalkDraw(s tcell.Screen) {
-	c.Draw(s)
 	c.TreeNode.WalkDraw(s)
 }
 
-func (c *Column) Draw(s tcell.Screen) {
-	for y := c.y; y < c.y+c.h; y++ {
-		for x := c.x + 1; x < c.x+c.w; x++ {
-			s.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-		}
-	}
-}
+func (c *Column) Draw(s tcell.Screen) {}
 
 func (c *Column) syncChildren() {
 	c.children = []DrawNode{c.gutter, c.tag}

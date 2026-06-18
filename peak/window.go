@@ -11,6 +11,7 @@ import (
 	"github.com/aleksana/peak/internal/session"
 	"github.com/aleksana/peak/internal/wevent"
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 	uwidth "golang.org/x/text/width"
 )
 
@@ -219,6 +220,7 @@ func (tv *TextView) visualToBuffer(vx, vidx int) (int, int) {
 
 func (tv *TextView) Draw(s tcell.Screen) {
 	selStyle := tcell.StyleDefault.Background(tv.theme.SelectionBG).Foreground(tv.theme.SelectionFG)
+	spaces := strings.Repeat(" ", tv.w)
 
 	vrow := 0
 	for lidx := tv.scroll.Pos; lidx < len(tv.layout) && vrow < tv.h; lidx++ {
@@ -243,34 +245,29 @@ func (tv *TextView) Draw(s tcell.Screen) {
 			}
 
 			width := tv.runeWidth(r, vcol)
-			char := r
 			if r == '\t' {
-				char = ' '
-			} else if unicode.IsMark(r) || unicode.Is(unicode.Cf, r) || unicode.IsControl(r) {
-				char = '□'
-			}
-
-			for k := 0; k < width && vcol < tv.w; k++ {
-				s.SetContent(tv.x+vcol, tv.y+vrow, char, nil, style)
-				vcol++
-				if r != '\t' {
-					char = ' '
-				} // Only draw character once if it's wide
+				for k := 0; k < width && vcol < tv.w; k++ {
+					s.Put(tv.x+vcol, tv.y+vrow, " ", style)
+					vcol++
+				}
+			} else {
+				str := string(r)
+				if unicode.IsMark(r) || unicode.Is(unicode.Cf, r) || unicode.IsControl(r) {
+					str = "□"
+				}
+				s.Put(tv.x+vcol, tv.y+vrow, str, style)
+				vcol += width
 			}
 		}
-		for ; vcol < tv.w; vcol++ {
-			style := lineStyle
-			if tv.buffer.selection.Contains(vl.End, vl.BufferLine, false) {
-				style = selStyle
-			}
-			s.SetContent(tv.x+vcol, tv.y+vrow, ' ', nil, style)
+		eolStyle := lineStyle
+		if tv.buffer.selection.Contains(vl.End, vl.BufferLine, false) {
+			eolStyle = selStyle
 		}
+		s.PutStrStyled(tv.x+vcol, tv.y+vrow, spaces[:tv.w-vcol], eolStyle)
 		vrow++
 	}
 	for ; vrow < tv.h; vrow++ {
-		for col := 0; col < tv.w; col++ {
-			s.SetContent(tv.x+col, tv.y+vrow, ' ', nil, tv.style())
-		}
+		s.PutStrStyled(tv.x, tv.y+vrow, spaces, tv.style())
 	}
 }
 
@@ -573,9 +570,9 @@ type Handle struct {
 }
 
 func (hd *Handle) Draw(s tcell.Screen) {
-	style := tcell.StyleDefault.Background(hd.color).Foreground(tcell.ColorBlack)
+	style := tcell.StyleDefault.Background(hd.color).Foreground(color.Black)
 	for i := 0; i < hd.h; i++ {
-		s.SetContent(hd.x, hd.y+i, ' ', nil, style)
+		s.Put(hd.x, hd.y+i, " ", style)
 	}
 }
 func (hd *Handle) Resize(x, y, w, h int) { hd.x, hd.y, hd.w, hd.h = x, y, w, h }
@@ -595,7 +592,7 @@ func (sb *Scrollbar) Draw(s tcell.Screen) {
 	thumbHeight := max(1, (sb.visibleLines*sb.visibleLines)/sb.totalLines)
 	thumbStart := min(sb.visibleLines-thumbHeight, (sb.scrollPos*sb.visibleLines)/sb.totalLines)
 	for i := 0; i < thumbHeight; i++ {
-		s.SetContent(sb.x, sb.y+thumbStart+i, ' ', nil, sb.thumbStyle())
+		s.Put(sb.x, sb.y+thumbStart+i, " ", sb.thumbStyle())
 	}
 }
 func (sb *Scrollbar) Resize(x, y, w, h int) { sb.x, sb.y, sb.w, sb.h = x, y, w, h }

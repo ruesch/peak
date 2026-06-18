@@ -10,6 +10,7 @@ import (
 	"github.com/aleksana/peak/peak/term"
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 const maxHistory = 1000
@@ -97,12 +98,12 @@ func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose f
 			return
 		}
 		select {
-		case tv.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {
+		case tv.editor.callCh <- func() {
 			if tv.OnCWD != nil {
 				tv.onCWDStarted = true
 				tv.OnCWD(path)
 			}
-		}):
+		}:
 		default:
 		}
 	}
@@ -132,10 +133,7 @@ func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose f
 			tv.bufferDirty = true
 			// Layout() (called from Window.Draw on the next frame) handles
 			// contentHeight and scroll sync. Just signal a redraw.
-			select {
-			case tv.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {}):
-			default:
-			}
+			tv.editor.Redraw()
 		}
 	}()
 
@@ -152,14 +150,16 @@ func (tv *TermView) Draw(s tcell.Screen) {
 		for x := 0; x < tv.w; x++ {
 			char, fg, bg, mode := ' ', terminal.DefaultFG, terminal.DefaultBG, int16(0)
 			if screenY >= 0 && screenY < limit {
-				if c, f, b, m := tv.state.Cell(x, screenY); c != 0 {
-					char, fg, bg, mode = c, f, b, m
+				c, f, b, m := tv.state.Cell(x, screenY)
+				if c == 0 {
+					continue
 				}
+				char, fg, bg, mode = c, f, b, m
 			}
 
 			style := tcell.StyleDefault.
-				Foreground(tv.toTcellColor(fg, true)).
-				Background(tv.toTcellColor(bg, false))
+				Foreground(tv.toTcellColor(fg)).
+				Background(tv.toTcellColor(bg))
 
 			if mode&terminal.AttrUnderline != 0 {
 				style = style.Underline(true)
@@ -178,20 +178,20 @@ func (tv *TermView) Draw(s tcell.Screen) {
 				style = style.Background(tv.editor.theme.SelectionBG).
 					Foreground(tv.editor.theme.SelectionFG)
 			}
-			s.SetContent(tv.x+x, tv.y+y, char, nil, style)
+			s.Put(tv.x+x, tv.y+y, string(char), style)
 		}
 	}
 }
 
-func (tv *TermView) toTcellColor(c terminal.Color, isFG bool) tcell.Color {
+func (tv *TermView) toTcellColor(c terminal.Color) tcell.Color {
 	if c == terminal.DefaultFG || c == terminal.DefaultBG {
-		return tcell.ColorDefault
+		return color.Default
 	}
 	if c.IsRGB() {
 		r, g, b := c.RGBComponents()
-		return tcell.NewRGBColor(int32(r), int32(g), int32(b))
+		return color.NewRGBColor(int32(r), int32(g), int32(b))
 	}
-	return tcell.PaletteColor(int(c))
+	return color.PaletteColor(int(c))
 }
 
 func (tv *TermView) ShowCursor(s tcell.Screen) {
@@ -429,21 +429,16 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 		tv.scroll.AutoScroll = true
 		mod := e.Modifiers()
 		if mod&(tcell.ModAlt|tcell.ModMeta) != 0 {
-			key, str := e.Key(), e.Str()
-			isC := key == tcell.KeyCtrlC || (key == tcell.KeyRune && (str == "c" || str == "C") && mod&tcell.ModCtrl != 0)
-			isX := key == tcell.KeyCtrlX || (key == tcell.KeyRune && (str == "x" || str == "X") && mod&tcell.ModCtrl != 0)
-			isV := key == tcell.KeyCtrlV || (key == tcell.KeyRune && (str == "v" || str == "V") && mod&tcell.ModCtrl != 0)
-			isF := key == tcell.KeyCtrlF || (key == tcell.KeyRune && (str == "f" || str == "F") && mod&tcell.ModCtrl != 0)
-
-			if isC || isX {
+			key := e.Key()
+			if key == tcell.KeyCtrlC || key == tcell.KeyCtrlX {
 				tv.Snarf()
 				return false
 			}
-			if isV {
+			if key == tcell.KeyCtrlV {
 				tv.Paste()
 				return false
 			}
-			if isF {
+			if key == tcell.KeyCtrlF {
 				if tv.GetSelectedText() != "" {
 					tv.editor.Execute(nil, nil, "Look")
 				}
@@ -630,7 +625,9 @@ func keyToEscSeq(e *tcell.EventKey) string {
 	if e.Key() == tcell.KeyRune {
 		return e.Str()
 	}
-
+	if e.Key() >= tcell.KeyCtrlA && e.Key() <= tcell.KeyCtrlZ {
+		return string([]byte{byte(e.Key() - tcell.KeyCtrlA + 1)})
+	}
 	switch e.Key() {
 	case tcell.KeyEnter:
 		return "\r"
@@ -658,58 +655,6 @@ func keyToEscSeq(e *tcell.EventKey) string {
 		return "\x1b[F"
 	case tcell.KeyDelete:
 		return "\x1b[3~"
-	case tcell.KeyCtrlA:
-		return "\x01"
-	case tcell.KeyCtrlB:
-		return "\x02"
-	case tcell.KeyCtrlC:
-		return "\x03"
-	case tcell.KeyCtrlD:
-		return "\x04"
-	case tcell.KeyCtrlE:
-		return "\x05"
-	case tcell.KeyCtrlF:
-		return "\x06"
-	case tcell.KeyCtrlG:
-		return "\x07"
-	case tcell.KeyCtrlH:
-		return "\x08"
-	case tcell.KeyCtrlI:
-		return "\x09"
-	case tcell.KeyCtrlJ:
-		return "\x0a"
-	case tcell.KeyCtrlK:
-		return "\x0b"
-	case tcell.KeyCtrlL:
-		return "\x0c"
-	case tcell.KeyCtrlM:
-		return "\x0d"
-	case tcell.KeyCtrlN:
-		return "\x0e"
-	case tcell.KeyCtrlO:
-		return "\x0f"
-	case tcell.KeyCtrlP:
-		return "\x10"
-	case tcell.KeyCtrlQ:
-		return "\x11"
-	case tcell.KeyCtrlR:
-		return "\x12"
-	case tcell.KeyCtrlS:
-		return "\x13"
-	case tcell.KeyCtrlT:
-		return "\x14"
-	case tcell.KeyCtrlU:
-		return "\x15"
-	case tcell.KeyCtrlV:
-		return "\x16"
-	case tcell.KeyCtrlW:
-		return "\x17"
-	case tcell.KeyCtrlX:
-		return "\x18"
-	case tcell.KeyCtrlY:
-		return "\x19"
-	case tcell.KeyCtrlZ:
-		return "\x1a"
 	}
 	return ""
 }

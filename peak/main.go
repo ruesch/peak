@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 type Theme struct {
@@ -50,6 +51,7 @@ type Editor struct {
 	CmdChan       chan func()
 	redrawCh      chan struct{} // capacity-1; 9P goroutines signal after state changes
 	execCh        chan execReq  // buffered; 9P goroutines send executive ops here
+	callCh        chan func()   // buffered; background goroutines dispatch fire-and-forget UI callbacks
 	screen        tcell.Screen
 	tag           *TextView
 	columns       []*Column
@@ -112,6 +114,7 @@ func (e *Editor) Init(numCols int, args []string) {
 	e.CmdChan = make(chan func())
 	e.redrawCh = make(chan struct{}, 1)
 	e.execCh = make(chan execReq, 8)
+	e.callCh = make(chan func(), 16)
 	e.nextWinID = 1
 	e.ninep = NewNineP(e)
 	if err := e.ApplyTheme("catppuccin_mocha"); err != nil {
@@ -194,19 +197,17 @@ func (e *Editor) Run() {
 			if ev == nil {
 				return
 			}
-			switch ev := ev.(type) {
-			case *tcell.EventInterrupt:
-				if f, ok := ev.Data().(func()); ok {
-					f()
-				}
+			if quit, redraw := e.HandleEvent(ev); quit {
+				return
+			} else if redraw {
 				e.Draw()
-			default:
-				if quit, redraw := e.HandleEvent(ev); quit {
-					return
-				} else if redraw {
-					e.Draw()
-				}
 			}
+		case fn := <-e.callCh:
+			if timer != nil {
+				timer.Stop()
+			}
+			fn()
+			e.Draw()
 		case fn := <-e.CmdChan:
 			if timer != nil {
 				timer.Stop()
@@ -269,11 +270,7 @@ func (e *Editor) trackDragScroll(view View, my int) {
 }
 
 func (e *Editor) Draw() {
-	for y := 1; y < e.h; y++ {
-		for x := 0; x < e.w; x++ {
-			e.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-		}
-	}
+	e.screen.Clear()
 	e.syncChildren()
 	e.WalkLayout()
 	e.WalkDraw(e.screen)
@@ -551,7 +548,7 @@ func (t *Theme) colorForAttr(attr string) tcell.Color {
 	case "error":
 		return t.SynError
 	default:
-		return tcell.ColorDefault
+		return color.Default
 	}
 }
 

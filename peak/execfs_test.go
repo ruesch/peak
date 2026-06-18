@@ -515,9 +515,13 @@ func TestExecFileCreatesTerminalWindow(t *testing.T) {
 	go func() {
 		_, err := f.WriteString("my-test-window\n")
 		errCh <- err
+		select {
+		case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+		default:
+		}
 	}()
 
-	// Drive the tcell event loop so the PostEvent callback runs.
+	// Drive the tcell event loop so the callback runs.
 	var writeErr error
 	waitFor(t, e, s, func() bool {
 		select {
@@ -570,6 +574,10 @@ func TestExecFileDoubleWriteFails(t *testing.T) {
 	go func() {
 		_, err := f.WriteString("first-window\n")
 		errCh <- err
+		select {
+		case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+		default:
+		}
 	}()
 
 	var firstErr error

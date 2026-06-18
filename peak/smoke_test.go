@@ -69,6 +69,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.Screen) {
 		CmdChan:  make(chan func()),
 		redrawCh: make(chan struct{}, 1),
 		execCh:   make(chan execReq, 8),
+		callCh:   make(chan func(), 16),
 	}
 	appEditor = e
 	e.ninep = NewNineP(e)
@@ -93,6 +94,18 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.Screen) {
 			case 'e':
 				e.appendToErrorWindow(req.col, req.win, req.text)
 			}
+			// Wake up any waitFor loops so they can recheck their condition.
+			select {
+			case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+			default:
+			}
+		}
+	}()
+
+	go func() {
+		for fn := range e.callCh {
+			fn()
+			e.Draw()
 			// Wake up any waitFor loops so they can recheck their condition.
 			select {
 			case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):

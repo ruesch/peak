@@ -12,7 +12,6 @@ import (
 
 	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
-	"github.com/gdamore/tcell/v3"
 )
 
 // peakNamespaceFs is the virtual file server for the /peak control files.
@@ -250,25 +249,21 @@ func (f *execFile) WriteAt(p []byte, _ int64) (int, error) {
 	}
 	title := strings.TrimSpace(string(p))
 
-	reply := make(chan int, 1)
-	f.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {
+	id := -1
+	f.editor.Call(func() {
 		pty := newExternalPTY()
 		col := f.editor.getTargetColumn(nil, nil)
 		if col == nil {
-			reply <- -1
 			return
 		}
 		newWin, err := col.AddSessionTermWindow(title, pty)
 		if err != nil {
-			reply <- -1
 			return
 		}
 		f.editor.ActivateWindow(newWin)
 		col.Resize(col.x, col.y, col.w, col.h)
-		reply <- newWin.ID
+		id = newWin.ID
 	})
-
-	id := <-reply
 	if id < 0 {
 		return 0, fmt.Errorf("exec: failed to create terminal window")
 	}
