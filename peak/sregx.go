@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/aleksana/peak/peak/regexp"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 type Range struct {
@@ -906,9 +906,9 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 				if msg == "" && err != nil {
 					msg = err.Error()
 				}
-				ctx.Editor.screen.PostEvent(tcell.NewEventInterrupt(func() {
+				ctx.Editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {
 					ctx.Editor.showError(ctx.Column, ctx.Window, getPathDir(filename), msg)
-				}))
+				})
 			}
 		}()
 		return addr, true

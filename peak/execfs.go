@@ -12,7 +12,7 @@ import (
 
 	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // peakNamespaceFs is the virtual file server for the /peak control files.
@@ -251,7 +251,7 @@ func (f *execFile) WriteAt(p []byte, _ int64) (int, error) {
 	title := strings.TrimSpace(string(p))
 
 	reply := make(chan int, 1)
-	f.editor.screen.PostEvent(tcell.NewEventInterrupt(func() {
+	f.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {
 		pty := newExternalPTY()
 		col := f.editor.getTargetColumn(nil, nil)
 		if col == nil {
@@ -266,7 +266,7 @@ func (f *execFile) WriteAt(p []byte, _ int64) (int, error) {
 		f.editor.ActivateWindow(newWin)
 		col.Resize(col.x, col.y, col.w, col.h)
 		reply <- newWin.ID
-	}))
+	})
 
 	id := <-reply
 	if id < 0 {

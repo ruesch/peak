@@ -9,7 +9,7 @@ import (
 	"github.com/aleksana/peak/internal/session"
 	"github.com/aleksana/peak/peak/term"
 	"github.com/atotto/clipboard"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 const maxHistory = 1000
@@ -96,12 +96,15 @@ func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose f
 		default:
 			return
 		}
-		tv.editor.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		select {
+		case tv.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {
 			if tv.OnCWD != nil {
 				tv.onCWDStarted = true
 				tv.OnCWD(path)
 			}
-		}))
+		}):
+		default:
+		}
 	}
 
 	// Initial resize
@@ -129,7 +132,10 @@ func NewTermView(editor *Editor, sess session.Session, x, y, w, h int, onClose f
 			tv.bufferDirty = true
 			// Layout() (called from Window.Draw on the next frame) handles
 			// contentHeight and scroll sync. Just signal a redraw.
-			tv.editor.screen.PostEvent(tcell.NewEventInterrupt(func() {}))
+			select {
+			case tv.editor.screen.EventQ() <- tcell.NewEventInterrupt(func() {}):
+			default:
+			}
 		}
 	}()
 
@@ -423,11 +429,11 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 		tv.scroll.AutoScroll = true
 		mod := e.Modifiers()
 		if mod&(tcell.ModAlt|tcell.ModMeta) != 0 {
-			key, r := e.Key(), e.Rune()
-			isC := key == tcell.KeyCtrlC || (key == tcell.KeyRune && (r == 'c' || r == 'C') && mod&tcell.ModCtrl != 0)
-			isX := key == tcell.KeyCtrlX || (key == tcell.KeyRune && (r == 'x' || r == 'X') && mod&tcell.ModCtrl != 0)
-			isV := key == tcell.KeyCtrlV || (key == tcell.KeyRune && (r == 'v' || r == 'V') && mod&tcell.ModCtrl != 0)
-			isF := key == tcell.KeyCtrlF || (key == tcell.KeyRune && (r == 'f' || r == 'F') && mod&tcell.ModCtrl != 0)
+			key, str := e.Key(), e.Str()
+			isC := key == tcell.KeyCtrlC || (key == tcell.KeyRune && (str == "c" || str == "C") && mod&tcell.ModCtrl != 0)
+			isX := key == tcell.KeyCtrlX || (key == tcell.KeyRune && (str == "x" || str == "X") && mod&tcell.ModCtrl != 0)
+			isV := key == tcell.KeyCtrlV || (key == tcell.KeyRune && (str == "v" || str == "V") && mod&tcell.ModCtrl != 0)
+			isF := key == tcell.KeyCtrlF || (key == tcell.KeyRune && (str == "f" || str == "F") && mod&tcell.ModCtrl != 0)
 
 			if isC || isX {
 				tv.Snarf()
@@ -622,7 +628,7 @@ func (tv *TermView) Paste() {
 
 func keyToEscSeq(e *tcell.EventKey) string {
 	if e.Key() == tcell.KeyRune {
-		return string(e.Rune())
+		return e.Str()
 	}
 
 	switch e.Key() {
@@ -632,7 +638,7 @@ func keyToEscSeq(e *tcell.EventKey) string {
 		return "\t"
 	case tcell.KeyEsc:
 		return "\x1b"
-	case tcell.KeyBackspace, tcell.KeyBackspace2:
+	case tcell.KeyBackspace:
 		return "\x7f"
 	case tcell.KeyUp:
 		return "\x1b[A"

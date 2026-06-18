@@ -13,12 +13,12 @@ import (
 
 	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // setupExecFsTest creates an editor with one column and the peakNamespaceFs
 // that mirrors what NineP.Listen() actually serves.
-func setupExecFsTest(t *testing.T) (*Editor, *Column, *peakNamespaceFs, tcell.SimulationScreen) {
+func setupExecFsTest(t *testing.T) (*Editor, *Column, *peakNamespaceFs, tcell.Screen) {
 	t.Helper()
 	e, s := setupTest(t, 120, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)

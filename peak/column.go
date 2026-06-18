@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/aleksana/peak/internal/session"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 type Gutter struct {

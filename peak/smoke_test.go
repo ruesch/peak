@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/vt"
 )
 
 // GetWordCoordinate finds the occurrence of a word starting from (startX, startY) and returns its (x, y) coordinate.
-func GetWordCoordinate(s tcell.SimulationScreen, word string, startX, startY int) (int, int, bool) {
+func GetWordCoordinate(s tcell.Screen, word string, startX, startY int) (int, int, bool) {
 	width, height := s.Size()
 	for y := startY; y < height; y++ {
 		var line strings.Builder
@@ -19,8 +20,12 @@ func GetWordCoordinate(s tcell.SimulationScreen, word string, startX, startY int
 			xMin = startX
 		}
 		for x := 0; x < width; x++ {
-			mainc, _, _, _ := s.GetContent(x, y)
-			line.WriteRune(mainc)
+			str, _, _ := s.Get(x, y)
+			r := ' '
+			if len(str) > 0 {
+				r = []rune(str)[0]
+			}
+			line.WriteRune(r)
 		}
 		lineStr := line.String()
 		if idx := strings.Index(lineStr[xMin:], word); idx != -1 {
@@ -31,13 +36,12 @@ func GetWordCoordinate(s tcell.SimulationScreen, word string, startX, startY int
 }
 
 // GetColorCoordinate finds the first cell with the specified foreground or background color.
-func GetColorCoordinate(s tcell.SimulationScreen, color tcell.Color) (int, int, bool) {
+func GetColorCoordinate(s tcell.Screen, color tcell.Color) (int, int, bool) {
 	width, height := s.Size()
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			_, _, style, _ := s.GetContent(x, y)
-			fg, bg, _ := style.Decompose()
-			if fg == color || bg == color {
+			_, style, _ := s.Get(x, y)
+			if style.GetForeground() == color || style.GetBackground() == color {
 				return x, y, true
 			}
 		}
@@ -46,17 +50,20 @@ func GetColorCoordinate(s tcell.SimulationScreen, color tcell.Color) (int, int, 
 }
 
 // VerifyNewColExists checks if the word "NewCol" is present anywhere on the screen.
-func VerifyNewColExists(s tcell.SimulationScreen) bool {
+func VerifyNewColExists(s tcell.Screen) bool {
 	_, _, found := GetWordCoordinate(s, "NewCol", 0, 0)
 	return found
 }
 
-func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
-	s := tcell.NewSimulationScreen("")
-	if err := s.Init(); err != nil {
-		t.Fatalf("failed to init simulation screen: %v", err)
+func setupTest(t *testing.T, w, h int) (*Editor, tcell.Screen) {
+	mt := vt.NewMockTerm(vt.MockOptSize{X: vt.Col(w), Y: vt.Row(h)})
+	s, err := tcell.NewTerminfoScreenFromTty(mt)
+	if err != nil {
+		t.Fatalf("failed to create screen: %v", err)
 	}
-	s.SetSize(w, h)
+	if err := s.Init(); err != nil {
+		t.Fatalf("failed to init screen: %v", err)
+	}
 	e := &Editor{
 		screen:   s,
 		CmdChan:  make(chan func()),
@@ -68,7 +75,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 	if err := e.ApplyTheme("catppuccin_mocha"); err != nil {
 		t.Fatalf("ApplyTheme: %v", err)
 	}
-	e.w, e.h = s.Size()
+	e.w, e.h = w, h
 
 	go func() {
 		for fn := range e.CmdChan {
@@ -87,7 +94,10 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 				e.appendToErrorWindow(req.col, req.win, req.text)
 			}
 			// Wake up any waitFor loops so they can recheck their condition.
-			e.screen.PostEvent(tcell.NewEventInterrupt(nil))
+			select {
+			case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+			default:
+			}
 		}
 	}()
 
@@ -101,7 +111,7 @@ func setupTest(t *testing.T, w, h int) (*Editor, tcell.SimulationScreen) {
 	return e, s
 }
 
-func waitFor(t *testing.T, e *Editor, s tcell.SimulationScreen, condition func() bool) {
+func waitFor(t *testing.T, e *Editor, s tcell.Screen, condition func() bool) {
 	timeout := time.After(3 * time.Second)
 	done := make(chan bool)
 	go func() {
@@ -110,8 +120,8 @@ func waitFor(t *testing.T, e *Editor, s tcell.SimulationScreen, condition func()
 				done <- true
 				return
 			}
-			ev := s.PollEvent()
-			if ev == nil {
+			ev, ok := <-s.EventQ()
+			if !ok {
 				return
 			}
 			if intr, ok := ev.(*tcell.EventInterrupt); ok {
@@ -128,8 +138,10 @@ func waitFor(t *testing.T, e *Editor, s tcell.SimulationScreen, condition func()
 	case <-done:
 		return
 	case <-timeout:
-		// Post an interrupt event to unblock PollEvent
-		s.PostEvent(tcell.NewEventInterrupt(nil))
+		select {
+		case s.EventQ() <- tcell.NewEventInterrupt(nil):
+		default:
+		}
 		t.Fatal("timeout waiting for condition")
 	}
 }
@@ -1234,7 +1246,7 @@ func TestTextViewTypingRevealsCursorBelowVisible(t *testing.T) {
 
 	bx, by := tv.visualToBuffer(0, 9)
 	tv.buffer.cursor = Cursor{bx, by}
-	tv.HandleEvent(tcell.NewEventKey(tcell.KeyDown, 0, 0))
+	tv.HandleEvent(tcell.NewEventKey(tcell.KeyDown, "", 0))
 
 	if tv.scroll.Pos != 1 {
 		t.Fatalf("after KeyDown past visible, scroll.Pos=%d, want 1", tv.scroll.Pos)
@@ -1257,7 +1269,7 @@ func TestTextViewScrollAwayThenTypeSnapsToCursor(t *testing.T) {
 
 	tv.scroll.Pos = 50
 	tv.scroll.AutoScroll = false
-	tv.HandleEvent(tcell.NewEventKey(tcell.KeyRune, 'x', 0))
+	tv.HandleEvent(tcell.NewEventKey(tcell.KeyRune, "x", 0))
 
 	if tv.scroll.Pos != 0 {
 		t.Fatalf("after typing while scrolled away, scroll.Pos=%d, want 0", tv.scroll.Pos)
@@ -1432,9 +1444,13 @@ func TestColumnDragPreservesBackground(t *testing.T) {
 
 	for y := 2; y < e.h; y++ {
 		for x := 0; x < col0.w; x++ {
-			mainc, _, _, _ := s.GetContent(x, y)
-			if mainc != ' ' {
-				t.Errorf("non-blank cell at (%d,%d) in left column after drag: mainc=%q", x, y, mainc)
+			str, _, _ := s.Get(x, y)
+			r := ' '
+			if len(str) > 0 {
+				r = []rune(str)[0]
+			}
+			if r != ' ' {
+				t.Errorf("non-blank cell at (%d,%d) in left column after drag: mainc=%q", x, y, r)
 				return
 			}
 		}
@@ -1473,9 +1489,13 @@ func TestDelcolLeavesBlank(t *testing.T) {
 	// Everything below global tag (y >= 1) must be blank.
 	for y := 1; y < e.h; y++ {
 		for x := 0; x < e.w; x++ {
-			mainc, _, _, _ := s.GetContent(x, y)
-			if mainc != ' ' {
-				t.Errorf("non-blank cell at (%d,%d) after Delcol: mainc=%q", x, y, mainc)
+			str, _, _ := s.Get(x, y)
+			r := ' '
+			if len(str) > 0 {
+				r = []rune(str)[0]
+			}
+			if r != ' ' {
+				t.Errorf("non-blank cell at (%d,%d) after Delcol: mainc=%q", x, y, r)
 				return
 			}
 		}
@@ -1521,9 +1541,8 @@ func TestDelcolNarrowNoExtraTagRow(t *testing.T) {
 	// The row immediately below the window tag must have body background,
 	// not tag background — no stale blank tag row.
 	bodyRow := w.y + w.tagHeight()
-	_, _, style, _ := s.GetContent(w.x+1, bodyRow)
-	_, bg, _ := style.Decompose()
-	if bg == e.theme.TagBG {
+	_, style, _ := s.Get(w.x+1, bodyRow)
+	if style.GetBackground() == e.theme.TagBG {
 		t.Errorf("row %d below window tag has TagBG background — stale extra tag row", bodyRow)
 	}
 }
@@ -1650,7 +1669,7 @@ func TestEscToggleSelection(t *testing.T) {
 	tv.typingStart = &selStart
 	tv.buffer.cursor = selEnd
 
-	esc := func() { tv.HandleEvent(tcell.NewEventKey(tcell.KeyEsc, 0, 0)) }
+	esc := func() { tv.HandleEvent(tcell.NewEventKey(tcell.KeyEsc, "", 0)) }
 
 	// ESC1: typing → select [selStart, selEnd]
 	esc()
@@ -1694,7 +1713,7 @@ func TestEscToggleSelection(t *testing.T) {
 	}
 
 	// Typing must break the toggle cycle (typingEnd cleared)
-	tv.HandleEvent(tcell.NewEventKey(tcell.KeyRune, 'x', 0))
+	tv.HandleEvent(tcell.NewEventKey(tcell.KeyRune, "x", 0))
 	if tv.typingEnd != nil {
 		t.Error("after typing: typingEnd should be nil (cycle broken)")
 	}

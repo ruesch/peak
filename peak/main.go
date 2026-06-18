@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 type Theme struct {
@@ -118,7 +118,7 @@ func (e *Editor) Init(numCols int, args []string) {
 		log.Printf("theme: %v", err)
 	}
 	e.ninep.Listen()
-	s, err := tcell.NewScreen()
+	s, err := tcell.NewTerminfoScreen()
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
@@ -175,12 +175,7 @@ func (e *Editor) Init(numCols int, args []string) {
 
 // Run enters the main event loop.
 func (e *Editor) Run() {
-	events := make(chan tcell.Event)
-	go func() {
-		for {
-			events <- e.screen.PollEvent()
-		}
-	}()
+	events := e.screen.EventQ()
 
 	e.Draw()
 	for {

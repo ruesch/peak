@@ -10,7 +10,7 @@ import (
 
 	"github.com/aleksana/peak/internal/session"
 	"github.com/aleksana/peak/internal/wevent"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 	uwidth "golang.org/x/text/width"
 )
 
@@ -382,7 +382,7 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 			tv.typingStart = nil
 			tv.buffer.ClearSelection()
 			tv.buffer.DeleteWordBefore()
-		case tcell.KeyCtrlH, tcell.KeyBackspace, tcell.KeyBackspace2:
+		case tcell.KeyCtrlH, tcell.KeyBackspace:
 			tv.prepareTyping()
 			tv.buffer.Backspace()
 		case tcell.KeyDelete:
@@ -460,7 +460,9 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 			if tv.prepareTyping() {
 				tv.buffer.DeleteSelection()
 			}
-			tv.buffer.Insert(ev.Rune())
+			for _, r := range ev.Str() {
+				tv.buffer.Insert(r)
+			}
 		}
 		tv.scroll.AutoScroll = true
 		tv.UpdateLayout()
