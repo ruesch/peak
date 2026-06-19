@@ -512,20 +512,20 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				if buttons == tcell.ButtonNone {
 					isRelease = true
 					switch {
-					case tv.lastButtons&tcell.Button1 != 0:
+					case tv.lastButtons&tcell.ButtonPrimary != 0:
 						btnReport = 0
-					case tv.lastButtons&tcell.Button3 != 0:
+					case tv.lastButtons&tcell.ButtonMiddle != 0:
 						btnReport = 1
-					case tv.lastButtons&tcell.Button2 != 0:
+					case tv.lastButtons&tcell.ButtonSecondary != 0:
 						btnReport = 2
 					}
 				} else {
 					switch {
-					case buttons&tcell.Button1 != 0:
+					case buttons&tcell.ButtonPrimary != 0:
 						btnReport = 0
-					case buttons&tcell.Button3 != 0:
+					case buttons&tcell.ButtonMiddle != 0:
 						btnReport = 1
-					case buttons&tcell.Button2 != 0:
+					case buttons&tcell.ButtonSecondary != 0:
 						btnReport = 2
 					}
 				}
@@ -537,11 +537,11 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 
 				if buttons != tcell.ButtonNone && motionMode {
 					switch {
-					case buttons&tcell.Button1 != 0:
+					case buttons&tcell.ButtonPrimary != 0:
 						btnReport = 0
-					case buttons&tcell.Button3 != 0:
+					case buttons&tcell.ButtonMiddle != 0:
 						btnReport = 1
-					case buttons&tcell.Button2 != 0:
+					case buttons&tcell.ButtonSecondary != 0:
 						btnReport = 2
 					}
 					isMotion, handled = true, true
@@ -555,11 +555,11 @@ func (tv *TermView) HandleEvent(ev tcell.Event) bool {
 				tv.session.Write([]byte(esc))
 			}
 
-			if buttons&tcell.Button1 != 0 {
+			if buttons&tcell.ButtonPrimary != 0 {
 				tv.selection.Active = false
 			}
 		} else {
-			if buttons&tcell.Button1 != 0 {
+			if buttons&tcell.ButtonPrimary != 0 {
 				if !tv.selecting {
 					tv.selecting = true
 					tv.selection = Selection{Start: Cursor{rx, realRY}, End: Cursor{rx + 1, realRY}, Active: true}

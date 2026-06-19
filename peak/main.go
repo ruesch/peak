@@ -282,7 +282,7 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 		}
 
 		if e.dragCol != nil {
-			if buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
+			if buttons&(tcell.ButtonPrimary|tcell.ButtonSecondary|tcell.ButtonMiddle) != 0 {
 				e.moveColumnTo(e.dragCol, mx)
 				return false, true
 			}
@@ -290,17 +290,17 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 			return false, true
 		}
 		if e.dragWin != nil {
-			if buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
+			if buttons&(tcell.ButtonPrimary|tcell.ButtonSecondary|tcell.ButtonMiddle) != 0 {
 				e.moveWindowTo(e.dragWin, mx, my)
 				return false, true
 			}
 			if e.dragWin.y == e.dragWinStartY {
 				switch e.dragWinButton {
-				case tcell.Button1:
+				case tcell.ButtonPrimary:
 					e.dragWin.parent.GrowModerate(e.dragWin)
-				case tcell.Button2:
+				case tcell.ButtonSecondary:
 					e.dragWin.parent.Maximize(e.dragWin)
-				case tcell.Button3:
+				case tcell.ButtonMiddle:
 					e.dragWin.parent.GrowFull(e.dragWin)
 				}
 			}
@@ -311,7 +311,7 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 			quit := e.dragView.HandleEvent(ev)
 			if buttons == tcell.ButtonNone {
 				e.dragView = nil
-			} else if buttons&tcell.Button1 != 0 {
+			} else if buttons&tcell.ButtonPrimary != 0 {
 				e.trackDragScroll(e.dragView, my)
 			}
 			return quit, true
@@ -321,14 +321,14 @@ func (e *Editor) HandleEvent(ev tcell.Event) (bool, bool) {
 		if my == 0 {
 			word := e.tag.GetClickWord(mx, my)
 			if word != "" {
-				if buttons == tcell.Button3 { // Middle-click
+				if buttons == tcell.ButtonMiddle {
 					return e.Execute(nil, nil, word), true
 				}
-				if buttons == tcell.Button2 { // Right-click
+				if buttons == tcell.ButtonSecondary {
 					return e.Plumb(nil, word), true
 				}
 			}
-			if buttons == tcell.Button1 {
+			if buttons == tcell.ButtonPrimary {
 				e.dragView, e.focusedView = e.tag, e.tag
 			}
 			return e.tag.HandleEvent(ev), true

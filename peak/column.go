@@ -283,7 +283,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 		buttons := me.Buttons()
 
 		if my == c.tag.y {
-			if mx == c.x && buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
+			if mx == c.x && buttons&(tcell.ButtonPrimary|tcell.ButtonSecondary|tcell.ButtonMiddle) != 0 {
 				c.editor.dragCol = c
 				c.editor.dragColOrigW = c.explicitWidth
 				return false
@@ -291,14 +291,14 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 			if mx > c.x {
 				word := c.tag.GetClickWord(mx, my)
 				if word != "" {
-					if buttons == tcell.Button3 {
+					if buttons == tcell.ButtonMiddle {
 						return c.onExec(c, nil, word)
 					}
-					if buttons == tcell.Button2 {
+					if buttons == tcell.ButtonSecondary {
 						return c.editor.Plumb(nil, word)
 					}
 				}
-				if buttons == tcell.Button1 {
+				if buttons == tcell.ButtonPrimary {
 					c.editor.dragView, c.editor.focusedView = c.tag, c.tag
 				}
 				return c.tag.HandleEvent(ev)
@@ -308,7 +308,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 		for _, win := range c.windows {
 			if win.Contains(mx, my) {
 				onHandle := mx == win.x && my >= win.y && my < win.y+win.tagHeight()
-				if onHandle && buttons&(tcell.Button1|tcell.Button2|tcell.Button3) != 0 {
+				if onHandle && buttons&(tcell.ButtonPrimary|tcell.ButtonSecondary|tcell.ButtonMiddle) != 0 {
 					c.editor.dragWin = win
 					c.editor.dragWinOrigH = win.explicitHeight
 					c.editor.dragWinButton = buttons
@@ -317,7 +317,7 @@ func (c *Column) HandleEvent(ev tcell.Event) bool {
 					c.editor.focusedView = win.tag
 					return false
 				}
-				if buttons == tcell.Button1 {
+				if buttons == tcell.ButtonPrimary {
 					c.editor.ActivateWindow(win)
 					if my < win.y+win.tagHeight() {
 						c.editor.focusedView = win.tag

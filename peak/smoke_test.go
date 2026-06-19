@@ -165,7 +165,7 @@ func TestTcellView(t *testing.T) {
 func TestTextViewClickPlacesCursorOnClickedCharacter(t *testing.T) {
 	tv := NewTextView("abc", 0, 0, 10, 1, tcell.StyleDefault, false, false)
 
-	tv.HandleEvent(tcell.NewEventMouse(0, 0, tcell.Button1, 0))
+	tv.HandleEvent(tcell.NewEventMouse(0, 0, tcell.ButtonPrimary, 0))
 
 	if got := tv.buffer.cursor; got != (Cursor{0, 0}) {
 		t.Fatalf("cursor after clicking first character = %+v, want %+v", got, Cursor{0, 0})
@@ -199,7 +199,7 @@ func TestNewColClick(t *testing.T) {
 
 	// Simulate Button3 (Middle-click) on "NewCol"
 	// Editor.HandleEvent handles clicks on y=0
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	quit, redraw := e.HandleEvent(ev)
 	if quit {
 		t.Error("HandleEvent returned quit=true unexpectedly")
@@ -236,7 +236,7 @@ func TestHelpClick(t *testing.T) {
 	}
 
 	// Simulate Middle-click on "Help"
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	e.HandleEvent(ev)
 
 	// Use a channel to signal when we find the doc
@@ -282,7 +282,7 @@ func TestDelColClick(t *testing.T) {
 	}
 
 	// Simulate Middle-click on "Delcol"
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	quit, redraw := e.HandleEvent(ev)
 	if quit {
 		t.Error("HandleEvent returned quit=true unexpectedly")
@@ -321,7 +321,7 @@ func TestZeroxClick(t *testing.T) {
 	}
 
 	// Simulate Middle-click on "Zerox"
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	e.HandleEvent(ev)
 
 	if len(col.windows) != 2 {
@@ -354,7 +354,7 @@ func TestGetDirClick(t *testing.T) {
 	}
 
 	// Simulate Middle-click on "Get"
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	e.HandleEvent(ev)
 
 	// Wait for async directory listing
@@ -375,7 +375,7 @@ func TestGetDirClick(t *testing.T) {
 	}
 
 	// Simulate Button2 (Right-click) on "README.md"
-	ev2 := tcell.NewEventMouse(rx, ry, tcell.Button2, 0)
+	ev2 := tcell.NewEventMouse(rx, ry, tcell.ButtonSecondary, 0)
 	e.HandleEvent(ev2)
 
 	// Wait for README.md to open
@@ -455,32 +455,32 @@ func TestDragWindow(t *testing.T) {
 	}
 
 	// 1. Drag W1 (Col 0) to Col 2: cross one boundary at a time.
-	e.HandleEvent(tcell.NewEventMouse(0, 2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, 2, tcell.ButtonPrimary, 0))
 	if e.dragWin != w1 {
 		t.Fatal("Failed to start dragging w1")
 	}
 	// Step into Col 1 (past col0's right edge at x=colWidth)
-	e.HandleEvent(tcell.NewEventMouse(colWidth+5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(colWidth+5, 10, tcell.ButtonPrimary, 0))
 	// Step into Col 2 (past col1's right edge at x=2*colWidth)
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 10, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 10, tcell.ButtonNone, 0))
 
 	// 2. Drag W2 (Col 1) to Col 0
 	// Handle for W2 is at (e.columns[1].x, w2.y) = (40, 2)
-	e.HandleEvent(tcell.NewEventMouse(colWidth, 2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(colWidth, 2, tcell.ButtonPrimary, 0))
 	if e.dragWin != w2 {
 		t.Fatal("Failed to start dragging w2")
 	}
 	// Left threshold: mx < col0.x+col0.w-col0.w/4 = 40-10 = 30; use x=5.
-	e.HandleEvent(tcell.NewEventMouse(5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(5, 10, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(5, 10, tcell.ButtonNone, 0))
 
 	// 3. Drag W3 (Col 1, now alone at top) to Col 2
-	e.HandleEvent(tcell.NewEventMouse(colWidth, 2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(colWidth, 2, tcell.ButtonPrimary, 0))
 	if e.dragWin != w3 {
 		t.Fatal("Failed to start dragging w3")
 	}
-	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 20, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 20, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(2*colWidth+5, 20, tcell.ButtonNone, 0))
 
 	// Final check: Col 0 (W2), Col 1 (Empty), Col 2 (W1, W3)
@@ -529,12 +529,12 @@ func TestDragWindowInternal(t *testing.T) {
 
 	// 1. Drag W1 (idx 0) below W2.
 	// W1 handle at (0, w1.y). We drop it in W2's body area.
-	e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
 	if e.dragWin != w1 {
 		t.Fatal("drag w1 failed")
 	}
 	// Drag past W2's midpoint to trigger swap-right
-	e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonNone, 0))
 
 	if col.windows[0] != w2 || col.windows[1] != w1 || col.windows[2] != w3 {
@@ -544,11 +544,11 @@ func TestDragWindowInternal(t *testing.T) {
 	// 2. Drag W3 (idx 2) above W1 (idx 1).
 	// Current: [w2, w1, w3]
 	// We drop it in W1's tag area (w1.y)
-	e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.ButtonPrimary, 0))
 	if e.dragWin != w3 {
 		t.Fatal("drag w3 failed")
 	}
-	e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonNone, 0))
 
 	// Verify final: w2, w3, w1
@@ -591,8 +591,8 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("2to3", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonNone, 0))
 		checkOrder(t, col, w1, w3, w2)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -602,8 +602,8 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("3to2", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonNone, 0))
 		checkOrder(t, col, w1, w3, w2)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -613,8 +613,8 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("1to2", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonNone, 0))
 		checkOrder(t, col, w2, w1, w3)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -624,8 +624,8 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("2to1", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonNone, 0))
 		checkOrder(t, col, w2, w1, w3)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -635,9 +635,9 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("1to3", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y+w2.h/2+1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w3.y+w3.h/2+1, tcell.ButtonNone, 0))
 		checkOrder(t, col, w2, w3, w1)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -647,9 +647,9 @@ func TestWindowSwapAllDirections(t *testing.T) {
 	t.Run("3to1", func(t *testing.T) {
 		e, col, w1, w2, w3 := newSetup(t)
 		h1, h2, h3 := w1.h, w2.h, w3.h
-		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w3.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w2.y, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(0, w1.y, tcell.ButtonNone, 0))
 		checkOrder(t, col, w3, w1, w2)
 		checkHeights(t, w1, w2, w3, h1, h2, h3)
@@ -692,8 +692,8 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("2to3", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c1, c3, c2)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -703,8 +703,8 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("3to2", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c1, c3, c2)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -714,8 +714,8 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("1to2", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c2, c1, c3)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -725,8 +725,8 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("2to1", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c2, c1, c3)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -736,9 +736,9 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("1to3", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x+c2.w/2+1, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c3.x+c3.w/2+1, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c2, c3, c1)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -748,9 +748,9 @@ func TestColumnSwapAllDirections(t *testing.T) {
 	t.Run("3to1", func(t *testing.T) {
 		e, c1, c2, c3 := newSetup(t)
 		w1, w2, w3 := c1.w, c2.w, c3.w
-		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.Button1, 0))
-		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.Button1, 0))
+		e.HandleEvent(tcell.NewEventMouse(c3.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c2.x, 1, tcell.ButtonPrimary, 0))
+		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonPrimary, 0))
 		e.HandleEvent(tcell.NewEventMouse(c1.x+1, 1, tcell.ButtonNone, 0))
 		checkOrder(t, e, c3, c1, c2)
 		checkWidths(t, c1, c2, c3, w1, w2, w3)
@@ -805,7 +805,7 @@ func TestSimpleEdit(t *testing.T) {
 		}
 		t.Logf("Found 'Put' at (%d, %d), clicking", px, py)
 		// Simulate middle click
-		e.HandleEvent(tcell.NewEventMouse(px, py, tcell.Button3, 0))
+		e.HandleEvent(tcell.NewEventMouse(px, py, tcell.ButtonMiddle, 0))
 
 		// Wait for Put to complete (savedVersion matches current version)
 		waitFor(t, e, s, func() bool {
@@ -818,7 +818,7 @@ func TestSimpleEdit(t *testing.T) {
 			t.Fatalf("Iteration %d: Could not find 'Del' in window tag", i)
 		}
 		t.Logf("Found 'Del' at (%d, %d), clicking", dx, dy)
-		e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.Button3, 0))
+		e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.ButtonMiddle, 0))
 
 		// Verify closed
 		closed := false
@@ -864,7 +864,7 @@ func TestSimpleEdit(t *testing.T) {
 
 		// Close it again for next iteration or finish
 		dx, dy, _ = GetWordCoordinate(s, "Del", 0, win.tag.y)
-		e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.Button3, 0))
+		e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.ButtonMiddle, 0))
 		t.Logf("Iteration %d finished", i)
 	}
 }
@@ -903,7 +903,7 @@ func TestExternalCommand(t *testing.T) {
 	if !tfound {
 		t.Fatal("Could not find 'uname -a' coordinates on screen")
 	}
-	e.HandleEvent(tcell.NewEventMouse(tx, ty, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(tx, ty, tcell.ButtonMiddle, 0))
 
 	// 4. Wait for error output window and check content
 	var errWin *Window
@@ -947,7 +947,7 @@ func TestExternalCommand(t *testing.T) {
 	if !bfound {
 		t.Fatal("Could not find 'uname -a' in +Errors body")
 	}
-	e.HandleEvent(tcell.NewEventMouse(bx, by, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(bx, by, tcell.ButtonMiddle, 0))
 
 	// 9. Observe result isn't changed (replaces buffer with same output)
 	waitFor(t, e, s, func() bool {
@@ -990,7 +990,7 @@ func TestSimplePlumb(t *testing.T) {
 
 	win.body.GetBuffer().SetText(testString)
 	px, py, _ := GetWordCoordinate(s, "Put", 0, win.tag.y)
-	e.HandleEvent(tcell.NewEventMouse(px, py, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(px, py, tcell.ButtonMiddle, 0))
 
 	// Wait for Put
 	waitFor(t, e, s, func() bool {
@@ -999,7 +999,7 @@ func TestSimplePlumb(t *testing.T) {
 
 	// Close window
 	dx, dy, _ := GetWordCoordinate(s, "Del", 0, win.tag.y)
-	e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(dx, dy, tcell.ButtonMiddle, 0))
 
 	// 2. Open directory /peak/mirage/
 	e.Open(nil, "/peak/mirage/")
@@ -1027,7 +1027,7 @@ func TestSimplePlumb(t *testing.T) {
 	}
 
 	// Simulate Button2 (Right-click) on "2.txt"
-	e.HandleEvent(tcell.NewEventMouse(fx, fy, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(fx, fy, tcell.ButtonSecondary, 0))
 
 	// 4. Verify new window opened with correct content
 	waitFor(t, e, s, func() bool {
@@ -1363,11 +1363,11 @@ func TestDragWindowBetweenColumns(t *testing.T) {
 	s.Show()
 
 	// Drag w2 from col1 to col0, below w1.
-	e.HandleEvent(tcell.NewEventMouse(60, 2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(60, 2, tcell.ButtonPrimary, 0))
 	if e.dragWin != w2 {
 		t.Fatal("failed to start dragging w2")
 	}
-	e.HandleEvent(tcell.NewEventMouse(10, 15, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(10, 15, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(10, 15, tcell.ButtonNone, 0))
 
 	if len(col0.windows) != 2 || len(col1.windows) != 0 {
@@ -1378,11 +1378,11 @@ func TestDragWindowBetweenColumns(t *testing.T) {
 
 	// Drag w2 back to col1.
 	w2HandleY := w2.y
-	e.HandleEvent(tcell.NewEventMouse(0, w2HandleY, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(0, w2HandleY, tcell.ButtonPrimary, 0))
 	if e.dragWin != w2 {
 		t.Fatal("failed to start dragging w2 back")
 	}
-	e.HandleEvent(tcell.NewEventMouse(70, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(70, 10, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(70, 10, tcell.ButtonNone, 0))
 
 	if len(col0.windows) != 1 || len(col1.windows) != 1 {
@@ -1412,19 +1412,19 @@ func TestColumnDragPreservesBackground(t *testing.T) {
 	s.Show()
 
 	// Drag col1's column tag handle at (60, 1) left by 7 cells.
-	e.HandleEvent(tcell.NewEventMouse(60, 1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(60, 1, tcell.ButtonPrimary, 0))
 	if e.dragCol != col1 {
 		t.Fatal("failed to start column drag")
 	}
-	e.HandleEvent(tcell.NewEventMouse(7, 1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(7, 1, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(7, 1, tcell.ButtonNone, 0))
 
 	// Drag col1's handle back to 60.
-	e.HandleEvent(tcell.NewEventMouse(7, 1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(7, 1, tcell.ButtonPrimary, 0))
 	if e.dragCol != col1 {
 		t.Fatalf("expected dragCol=col1 after second start, got %v", e.dragCol)
 	}
-	e.HandleEvent(tcell.NewEventMouse(60, 1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(60, 1, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(60, 1, tcell.ButtonNone, 0))
 
 	e.Draw()
@@ -1464,7 +1464,7 @@ func TestDelcolLeavesBlank(t *testing.T) {
 		t.Fatal("could not find 'Delcol'")
 	}
 
-	ev := tcell.NewEventMouse(x, y, tcell.Button3, 0)
+	ev := tcell.NewEventMouse(x, y, tcell.ButtonMiddle, 0)
 	e.HandleEvent(ev)
 
 	if len(e.columns) != 0 {
@@ -1555,9 +1555,9 @@ func TestDragSelectAtBottomEdgeSetsScrollWin(t *testing.T) {
 	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Press in the middle of the body to start a drag.
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH/2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH/2, tcell.ButtonPrimary, 0))
 	// Move to the bottom edge.
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.ButtonPrimary, 0))
 
 	if e.scrollWin != win {
 		t.Fatalf("at bottom edge: scrollWin = %v, want win", e.scrollWin)
@@ -1567,7 +1567,7 @@ func TestDragSelectAtBottomEdgeSetsScrollWin(t *testing.T) {
 	}
 
 	// Move back into the middle — scrollWin must be cleared.
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH/2, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH/2, tcell.ButtonPrimary, 0))
 	if e.scrollWin != nil {
 		t.Errorf("after moving to middle: scrollWin should be nil")
 	}
@@ -1594,8 +1594,8 @@ func TestDragSelectTickExtendsSelection(t *testing.T) {
 	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Start drag and drag to bottom edge (sets scrollWin + dir=1).
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.ButtonPrimary, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.ButtonPrimary, 0))
 
 	if e.scrollWin != win {
 		t.Fatal("scrollWin not set after dragging to bottom edge")
@@ -1636,8 +1636,8 @@ func TestDragSelectInTagDoesNotScrollBody(t *testing.T) {
 
 	// Click-drag across the tag (y = win.tag.y).
 	tagY := win.tag.y
-	e.HandleEvent(tcell.NewEventMouse(win.x+1, tagY, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(win.x+5, tagY, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(win.x+1, tagY, tcell.ButtonPrimary, 0))
+	e.HandleEvent(tcell.NewEventMouse(win.x+5, tagY, tcell.ButtonPrimary, 0))
 
 	if e.scrollWin != nil {
 		t.Error("dragging in tag must not set scrollWin")
@@ -1722,8 +1722,8 @@ func TestDragSelectStopsAtLastLine(t *testing.T) {
 	bodyX, bodyY, bodyH := tv.x, tv.y, tv.h
 
 	// Drag to the bottom edge to arm the scroll timer.
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.Button1, 0))
-	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY, tcell.ButtonPrimary, 0))
+	e.HandleEvent(tcell.NewEventMouse(bodyX, bodyY+bodyH-1, tcell.ButtonPrimary, 0))
 
 	scrollBefore := tv.scroll.Pos
 	endYBefore := tv.buffer.selection.End.y
@@ -1781,7 +1781,7 @@ func TestHandleButton1GrowsModerate(t *testing.T) {
 	before := w2.h
 
 	// Static Button1 click on w2's handle.
-	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
 
 	if w2.h <= before {
@@ -1820,7 +1820,7 @@ func TestHandleButton2Maximizes(t *testing.T) {
 	e.Draw()
 
 	// Static Button2 click on w3's handle (last window, below others).
-	e.HandleEvent(tcell.NewEventMouse(w3.x, w3.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w3.x, w3.y, tcell.ButtonSecondary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w3.x, w3.y, tcell.ButtonNone, 0))
 
 	if col.maximized != w3 {
@@ -1864,7 +1864,7 @@ func TestHandleButton3GrowsExitsMaximize(t *testing.T) {
 	e.Draw()
 
 	// Maximize w2 first.
-	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonSecondary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
 	if col.maximized != w2 {
 		t.Fatal("setup: expected w2 to be maximized")
@@ -1872,7 +1872,7 @@ func TestHandleButton3GrowsExitsMaximize(t *testing.T) {
 
 	// w2 is now at the top of the column (y = col.y+1). Static Button3 click
 	// on its handle exits maximize and grows w2 while keeping all visible.
-	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonMiddle, 0))
 	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonNone, 0))
 
 	if col.maximized != nil {
@@ -1913,17 +1913,17 @@ func TestHandleButton2DragMovesWindow(t *testing.T) {
 	e.Draw()
 
 	// Button2 press on w2's handle.
-	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonSecondary, 0))
 	if e.dragWin != w2 {
 		t.Fatal("Button2 on handle should start a window drag")
 	}
-	if e.dragWinButton != tcell.Button2 {
+	if e.dragWinButton != tcell.ButtonSecondary {
 		t.Fatalf("dragWinButton = %v, want Button2", e.dragWinButton)
 	}
 
 	// Drag past w3's midpoint to trigger a swap, then release at a different Y.
 	dragY := w3.y + w3.h/2 + 1
-	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonSecondary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonNone, 0))
 
 	// Released at a different row → no maximize.
@@ -1952,13 +1952,13 @@ func TestHandleButton3DragMovesWindow(t *testing.T) {
 	e.resize()
 	e.Draw()
 
-	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, w2.y, tcell.ButtonMiddle, 0))
 	if e.dragWin != w2 {
 		t.Fatal("Button3 on handle should start a window drag")
 	}
 
 	dragY := w3.y + w3.h/2 + 1
-	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.Button3, 0))
+	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonMiddle, 0))
 	e.HandleEvent(tcell.NewEventMouse(w2.x, dragY, tcell.ButtonNone, 0))
 
 	// Released at a different row → no grow triggered.
@@ -1986,7 +1986,7 @@ func TestRemoveMaximizedWindowClearsFlag(t *testing.T) {
 	e.Draw()
 
 	// Maximize w1.
-	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonSecondary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonNone, 0))
 	if col.maximized != w1 {
 		t.Fatal("setup: w1 should be maximized")
@@ -2023,18 +2023,18 @@ func TestMoveMaximizedWindowClearsSourceFlag(t *testing.T) {
 	e.Draw()
 
 	// Maximize w1 in col0.
-	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button2, 0))
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonSecondary, 0))
 	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonNone, 0))
 	if col0.maximized != w1 {
 		t.Fatal("setup: w1 should be maximized in col0")
 	}
 
 	// Drag w1 into col1 using Button1 (regular drag, past col0's right edge).
-	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(w1.x, w1.y, tcell.ButtonPrimary, 0))
 	if e.dragWin != w1 {
 		t.Fatal("failed to start dragging w1")
 	}
-	e.HandleEvent(tcell.NewEventMouse(col1.x+5, 10, tcell.Button1, 0))
+	e.HandleEvent(tcell.NewEventMouse(col1.x+5, 10, tcell.ButtonPrimary, 0))
 	e.HandleEvent(tcell.NewEventMouse(col1.x+5, 10, tcell.ButtonNone, 0))
 
 	if col0.maximized != nil {
@@ -2061,11 +2061,11 @@ func TestMoveMaximizedWindowClearsSourceFlag(t *testing.T) {
 // TestColumnGutterAllButtonsStartDrag verifies that Button1, Button2, and
 // Button3 all start a column drag when clicking the column gutter.
 func TestColumnGutterAllButtonsStartDrag(t *testing.T) {
-	for _, btn := range []tcell.ButtonMask{tcell.Button1, tcell.Button2, tcell.Button3} {
+	for _, btn := range []tcell.ButtonMask{tcell.ButtonPrimary, tcell.ButtonSecondary, tcell.ButtonMiddle} {
 		name := map[tcell.ButtonMask]string{
-			tcell.Button1: "Button1",
-			tcell.Button2: "Button2",
-			tcell.Button3: "Button3",
+			tcell.ButtonPrimary:   "Button1",
+			tcell.ButtonSecondary: "Button2",
+			tcell.ButtonMiddle:    "Button3",
 		}[btn]
 		t.Run(name, func(t *testing.T) {
 			e, _ := setupTest(t, 120, 30)

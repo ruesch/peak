@@ -489,10 +489,10 @@ func (tv *TextView) HandleEvent(ev tcell.Event) bool {
 		mx, my := ev.Position()
 		if buttons != tcell.ButtonNone {
 			bx, by := tv.visualToBuffer(mx-tv.x, my-tv.y+tv.scroll.Pos)
-			if buttons == tcell.Button1 && !tv.drag {
+			if buttons == tcell.ButtonPrimary && !tv.drag {
 				tv.buffer.ClearSelection()
 			}
-			if buttons == tcell.Button1 {
+			if buttons == tcell.ButtonPrimary {
 				if !tv.drag {
 					tv.drag, tv.buffer.cursor = true, Cursor{bx, by}
 					tv.buffer.SetSelection(tv.buffer.cursor, tv.buffer.cursor)
@@ -999,19 +999,19 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 		}
 		amount := my - (win.y + th) + 1
 		btns := me.Buttons()
-		if btns&tcell.Button1 != 0 {
+		if btns&tcell.ButtonPrimary != 0 {
 			if win.editor.scrollWin == nil {
 				win.body.Scroll(-amount)
 				win.editor.scrollStartTime = time.Now()
 			}
 			win.editor.scrollWin, win.editor.scrollAmount, win.editor.scrollDir = win, amount, -1
-		} else if btns&tcell.Button2 != 0 {
+		} else if btns&tcell.ButtonSecondary != 0 {
 			if win.editor.scrollWin == nil {
 				win.body.Scroll(amount)
 				win.editor.scrollStartTime = time.Now()
 			}
 			win.editor.scrollWin, win.editor.scrollAmount, win.editor.scrollDir = win, amount, 1
-		} else if btns&tcell.Button3 != 0 {
+		} else if btns&tcell.ButtonMiddle != 0 {
 			if scroll, total, visible := win.body.GetScroll(); visible > 0 && total > 0 {
 				newScroll := ((my - (win.y + th)) * total) / visible
 				win.body.Scroll(newScroll - scroll)
@@ -1030,11 +1030,11 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 	btns := me.Buttons()
 	var word string
 	var q0, q1 int
-	if btns&(tcell.Button3|tcell.Button2) != 0 && (!target.IsRaw() || me.Modifiers()&tcell.ModCtrl != 0) {
+	if btns&(tcell.ButtonMiddle|tcell.ButtonSecondary) != 0 && (!target.IsRaw() || me.Modifiers()&tcell.ModCtrl != 0) {
 		word = target.GetClickWord(mx, my)
 		if word != "" {
 			q0, q1 = win.clickWordOffsets(target, mx, my, word)
-			if btns&tcell.Button3 != 0 {
+			if btns&tcell.ButtonMiddle != 0 {
 				win.broadcastEvent('M', 'x', q0, q1, 0, word)
 			} else {
 				win.broadcastEvent('M', 'l', q0, q1, 0, word)
@@ -1046,7 +1046,7 @@ func (win *Window) HandleEvent(ev tcell.Event) bool {
 	if word == "" {
 		return false
 	}
-	if btns&tcell.Button3 != 0 {
+	if btns&tcell.ButtonMiddle != 0 {
 		return win.onExec(win.parent, win, word)
 	}
 	return win.editor.Plumb(win, word)
