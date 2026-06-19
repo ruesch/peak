@@ -13,12 +13,12 @@ import (
 
 	"github.com/aleksana/peak/internal/vfs"
 	"github.com/aleksana/peak/internal/vfs/afero"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // setupExecFsTest creates an editor with one column and the peakNamespaceFs
 // that mirrors what NineP.Listen() actually serves.
-func setupExecFsTest(t *testing.T) (*Editor, *Column, *peakNamespaceFs, tcell.SimulationScreen) {
+func setupExecFsTest(t *testing.T) (*Editor, *Column, *peakNamespaceFs, tcell.Screen) {
 	t.Helper()
 	e, s := setupTest(t, 120, 30)
 	col := NewColumn(0, 1, e.w, e.h-1, e, e.Execute)
@@ -515,9 +515,13 @@ func TestExecFileCreatesTerminalWindow(t *testing.T) {
 	go func() {
 		_, err := f.WriteString("my-test-window\n")
 		errCh <- err
+		select {
+		case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+		default:
+		}
 	}()
 
-	// Drive the tcell event loop so the PostEvent callback runs.
+	// Drive the tcell event loop so the callback runs.
 	var writeErr error
 	waitFor(t, e, s, func() bool {
 		select {
@@ -570,6 +574,10 @@ func TestExecFileDoubleWriteFails(t *testing.T) {
 	go func() {
 		_, err := f.WriteString("first-window\n")
 		errCh <- err
+		select {
+		case e.screen.EventQ() <- tcell.NewEventInterrupt(nil):
+		default:
+		}
 	}()
 
 	var firstErr error

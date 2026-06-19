@@ -9,7 +9,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 type Theme struct {
@@ -35,21 +36,11 @@ type Theme struct {
 	SynError    tcell.Color
 }
 
-// execReq is a non-blocking request for the UI thread to run an executive
-// operation: execute a command, plumb a string, or append to the error window.
-type execReq struct {
-	col  *Column
-	win  *Window
-	text string
-	kind byte // 'x'=Execute, 'l'=Plumb, 'e'=appendToErrorWindow
-}
-
 // Editor is the main application state.
 type Editor struct {
 	TreeNode
-	CmdChan       chan func()
 	redrawCh      chan struct{} // capacity-1; 9P goroutines signal after state changes
-	execCh        chan execReq  // buffered; 9P goroutines send executive ops here
+	callCh        chan func()   // buffered; background goroutines dispatch UI callbacks
 	screen        tcell.Screen
 	tag           *TextView
 	columns       []*Column
@@ -92,7 +83,7 @@ func (e *Editor) Redraw() {
 
 func (e *Editor) Call(f func()) {
 	done := make(chan struct{})
-	e.CmdChan <- func() {
+	e.callCh <- func() {
 		f()
 		close(done)
 	}
@@ -109,16 +100,15 @@ func (e *Editor) Init(numCols int, args []string) {
 		log.SetOutput(logFile)
 	}
 
-	e.CmdChan = make(chan func())
 	e.redrawCh = make(chan struct{}, 1)
-	e.execCh = make(chan execReq, 8)
+	e.callCh = make(chan func(), 16)
 	e.nextWinID = 1
 	e.ninep = NewNineP(e)
 	if err := e.ApplyTheme("catppuccin_mocha"); err != nil {
 		log.Printf("theme: %v", err)
 	}
 	e.ninep.Listen()
-	s, err := tcell.NewScreen()
+	s, err := tcell.NewTerminfoScreen()
 	if err != nil {
 		log.Fatalf("%+v", err)
 	}
@@ -175,12 +165,7 @@ func (e *Editor) Init(numCols int, args []string) {
 
 // Run enters the main event loop.
 func (e *Editor) Run() {
-	events := make(chan tcell.Event)
-	go func() {
-		for {
-			events <- e.screen.PollEvent()
-		}
-	}()
+	events := e.screen.EventQ()
 
 	e.Draw()
 	for {
@@ -199,20 +184,12 @@ func (e *Editor) Run() {
 			if ev == nil {
 				return
 			}
-			switch ev := ev.(type) {
-			case *tcell.EventInterrupt:
-				if f, ok := ev.Data().(func()); ok {
-					f()
-				}
+			if quit, redraw := e.HandleEvent(ev); quit {
+				return
+			} else if redraw {
 				e.Draw()
-			default:
-				if quit, redraw := e.HandleEvent(ev); quit {
-					return
-				} else if redraw {
-					e.Draw()
-				}
 			}
-		case fn := <-e.CmdChan:
+		case fn := <-e.callCh:
 			if timer != nil {
 				timer.Stop()
 			}
@@ -221,19 +198,6 @@ func (e *Editor) Run() {
 		case <-e.redrawCh:
 			if timer != nil {
 				timer.Stop()
-			}
-			e.Draw()
-		case req := <-e.execCh:
-			if timer != nil {
-				timer.Stop()
-			}
-			switch req.kind {
-			case 'x':
-				req.win.onExec(req.col, req.win, req.text)
-			case 'l':
-				e.Plumb(req.win, req.text)
-			case 'e':
-				e.appendToErrorWindow(req.col, req.win, req.text)
 			}
 			e.Draw()
 		case <-tick:
@@ -274,11 +238,7 @@ func (e *Editor) trackDragScroll(view View, my int) {
 }
 
 func (e *Editor) Draw() {
-	for y := 1; y < e.h; y++ {
-		for x := 0; x < e.w; x++ {
-			e.screen.SetContent(x, y, ' ', nil, tcell.StyleDefault)
-		}
-	}
+	e.screen.Clear()
 	e.syncChildren()
 	e.WalkLayout()
 	e.WalkDraw(e.screen)
@@ -556,7 +516,7 @@ func (t *Theme) colorForAttr(attr string) tcell.Color {
 	case "error":
 		return t.SynError
 	default:
-		return tcell.ColorDefault
+		return color.Default
 	}
 }
 

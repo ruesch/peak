@@ -10,7 +10,8 @@ import (
 	"strings"
 
 	"github.com/aleksana/peak/internal/session"
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 )
 
 // Execute parses and runs internal or external commands.
@@ -209,7 +210,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 	// 2. Try to open new window
 	go func() {
 		content, isDir, writable, err := readFileOrDir(full)
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			if err == nil {
 				e.createWindow(e.getTargetColumn(nil, win), full, content, isDir, writable, line, col)
 			} else {
@@ -221,7 +222,7 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 					e.showError(nil, win, "", full+": "+normalizeError(err))
 				}
 			}
-		}))
+		}
 	}()
 }
 
@@ -290,7 +291,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 	path := normalizePath(arg, target.GetDir())
 	go func() {
 		content, isDir, writable, err := readFileOrDir(path)
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			if err == nil {
 				target.SetName(path)
 				if tv := target.bodyTextView(); tv != nil {
@@ -308,7 +309,7 @@ func (e *Editor) cmdGet(win *Window, cmd string) {
 			} else {
 				e.showError(target.parent, target, "", path+": "+normalizeError(err))
 			}
-		}))
+		}
 	}()
 }
 
@@ -331,7 +332,7 @@ func (e *Editor) cmdPut(win *Window, cmd string) {
 		version := tv.buffer.version
 		go func() {
 			err := writeFile(path, []byte(text))
-			e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+			e.callCh <- func() {
 				if err != nil {
 					e.showError(target.parent, target, "", normalizeError(err))
 				} else {
@@ -340,7 +341,7 @@ func (e *Editor) cmdPut(win *Window, cmd string) {
 					target.warnedVersion = version
 					e.ninep.BroadcastPut(target)
 				}
-			}))
+			}
 		}()
 	}
 }
@@ -457,9 +458,9 @@ func (e *Editor) cmdWin(col *Column, win *Window, cmd string) {
 						payload += "\n" + arg
 					}
 					if _, werr := newF.WriteAt([]byte(payload), 0); werr != nil {
-						e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+						e.callCh <- func() {
 							e.showError(targetCol, win, "", "remote session: "+werr.Error())
-						}))
+						}
 						return
 					}
 					buf := make([]byte, 256)
@@ -502,46 +503,42 @@ func (e *Editor) openRemoteTermWindow(targetCol *Column, win *Window, mountPath,
 
 	ioRead, err := vfsRoot.OpenFile(ioPath, os.O_RDONLY, 0)
 	if err != nil {
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			e.showError(targetCol, win, "", "remote io: "+err.Error())
-		}))
+		}
 		return
 	}
 	ioWrite, err := vfsRoot.OpenFile(ioPath, os.O_WRONLY, 0)
 	if err != nil {
 		ioRead.Close()
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			e.showError(targetCol, win, "", "remote io: "+err.Error())
-		}))
+		}
 		return
 	}
 	ctlF, err := vfsRoot.OpenFile(ctlPath, os.O_WRONLY, 0)
 	if err != nil {
 		ioRead.Close()
 		ioWrite.Close()
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			e.showError(targetCol, win, "", "remote ctl: "+err.Error())
-		}))
+		}
 		return
 	}
 
 	sess := session.NewRemote(ioRead, ioWrite, ctlF)
 	title := filepath.Join(dir, "-"+filepath.Base(mountPath))
 
-	reply := make(chan error, 1)
-	e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+	e.Call(func() {
 		newWin, err := targetCol.AddSessionTermWindow(title, sess)
 		if err != nil {
 			sess.Close()
 			e.showError(targetCol, win, "", err.Error())
-			reply <- err
 			return
 		}
 		e.ActivateWindow(newWin)
 		targetCol.Resize(targetCol.x, targetCol.y, targetCol.w, targetCol.h)
-		reply <- nil
-	}))
-	<-reply
+	})
 }
 
 func (e *Editor) cmdZerox(col *Column, win *Window) {
@@ -786,7 +783,7 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 
 	go func() {
 		out, err := runCommand(cmd, filename, input, winid)
-		e.screen.PostEvent(tcell.NewEventInterrupt(func() {
+		e.callCh <- func() {
 			if (pipechar == '<' || pipechar == '|') && win != nil {
 				buf := win.body.GetBuffer()
 				newCursor := buf.SetTextInRange(selStart, selEnd, out)
@@ -804,7 +801,7 @@ func (e *Editor) runExternal(col *Column, win *Window, cmd string) {
 				}
 				e.showError(col, win, getPathDir(filename), msg)
 			}
-		}))
+		}
 	}()
 }
 
@@ -863,7 +860,7 @@ func applyThemeFromData(t *Theme, data []byte) error {
 		if err != nil {
 			continue
 		}
-		setThemeField(t, key, tcell.NewHexColor(int32(hex)))
+		setThemeField(t, key, color.NewHexColor(int32(hex)))
 	}
 	return nil
 }

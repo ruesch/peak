@@ -1,6 +1,6 @@
 package main
 
-import "github.com/gdamore/tcell/v2"
+import "github.com/gdamore/tcell/v3"
 
 type DrawNode interface {
 	Layout()
