@@ -807,7 +807,12 @@ func NewTermWindow(tag string, parent *Column, editor *Editor, x, y, w, h int, c
 	if err != nil {
 		return nil, err
 	}
-	return newTermWindowFromSession(tag, sess, parent, editor, x, y, w, h, onExec)
+	win, err := newTermWindowFromSession(tag, sess, parent, editor, x, y, w, h, onExec)
+	if err != nil {
+		return nil, err
+	}
+	win.body.(*TermView).cmd = cmd
+	return win, nil
 }
 
 func newTermWindowFromSession(tag string, sess session.Session, parent *Column, editor *Editor, x, y, w, h int, onExec func(*Column, *Window, string) bool) (*Window, error) {
