@@ -189,17 +189,15 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 	}
 
 	// 1. Try to find existing window
-	for _, c := range e.columns {
-		for _, w := range c.windows {
-			if w.GetFilename() == full {
-				e.ActivateWindow(w)
-				if line >= 0 {
-					if tv := w.bodyTextView(); tv != nil {
-						tv.GotoLineCol(line, col)
-					}
+	for _, w := range e.allWindows() {
+		if w.GetFilename() == full {
+			e.ActivateWindow(w)
+			if line >= 0 {
+				if tv := w.bodyTextView(); tv != nil {
+					tv.GotoLineCol(line, col)
 				}
-				return
 			}
+			return
 		}
 	}
 
@@ -690,11 +688,9 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 	}
 	errName := filepath.Join(dir, "+Errors")
 
-	for _, c := range e.columns {
-		for _, w := range c.windows {
-			if w.kind == WinOut && w.GetFilename() == errName {
-				return w
-			}
+	for _, w := range e.allWindows() {
+		if w.kind == WinOut && w.GetFilename() == errName {
+			return w
 		}
 	}
 
