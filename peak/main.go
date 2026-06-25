@@ -91,7 +91,7 @@ func (e *Editor) Call(f func()) {
 }
 
 // Init sets up the initial editor state with the specified number of columns.
-func (e *Editor) Init(numCols int, args []string) {
+func (e *Editor) Init(numCols int, args []string, sessionFile string) {
 	user, _ := os.UserHomeDir()
 	logDir := filepath.Join(user, ".peak")
 	os.MkdirAll(logDir, 0700)
@@ -143,6 +143,14 @@ func (e *Editor) Init(numCols int, args []string) {
 	}
 	e.resize()
 	e.syncChildren()
+
+	if sessionFile != "" {
+		if err := e.Load(sessionFile); err != nil {
+			log.Printf("load session: %v", err)
+		} else {
+			return
+		}
+	}
 
 	if len(args) > 0 {
 		for _, arg := range args {
@@ -528,10 +536,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	cols := flag.Int("c", 2, "number of columns")
+	load := flag.String("l", "", "session file to load at startup")
 	flag.Parse()
 
 	appEditor = &Editor{}
-	appEditor.Init(*cols, flag.Args())
+	appEditor.Init(*cols, flag.Args(), *load)
 	defer appEditor.screen.Fini()
 	appEditor.Run()
 }

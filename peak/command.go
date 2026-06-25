@@ -26,22 +26,7 @@ func (e *Editor) Execute(col *Column, win *Window, cmd string) bool {
 
 	switch root {
 	case "Exit":
-		var dirty []*Window
-		for _, col := range e.columns {
-			for _, w := range col.windows {
-				if w.IsDirty() && !w.Warned() {
-					dirty = append(dirty, w)
-				}
-			}
-		}
-
-		if len(dirty) > 0 {
-			msg := ""
-			for _, w := range dirty {
-				w.Warn()
-				msg += w.GetFilename() + " modified\n"
-			}
-			e.showError(nil, nil, "", msg)
+		if !e.warnDirty(nil, nil, e.allWindows()) {
 			return false
 		}
 		return true
@@ -87,6 +72,17 @@ func (e *Editor) Execute(col *Column, win *Window, cmd string) bool {
 		e.cmdBind(win, cmd)
 	case "Umount":
 		e.cmdUmount(win, cmd)
+	case "Dump":
+		if err := e.Dump(e.getArg(win, cmd)); err != nil {
+			e.showError(nil, win, "", "Dump: "+err.Error())
+		}
+	case "Load":
+		if !e.warnDirty(nil, win, e.allWindows()) {
+			return false
+		}
+		if err := e.Load(e.getArg(win, cmd)); err != nil {
+			e.showError(nil, win, "", "Load: "+err.Error())
+		}
 	case "Help":
 		e.Open(win, "/peak/doc/README.md")
 	case "Theme":
@@ -193,17 +189,15 @@ func (e *Editor) OpenLine(win *Window, path string, line, col int, binaryFallbac
 	}
 
 	// 1. Try to find existing window
-	for _, c := range e.columns {
-		for _, w := range c.windows {
-			if w.GetFilename() == full {
-				e.ActivateWindow(w)
-				if line >= 0 {
-					if tv := w.bodyTextView(); tv != nil {
-						tv.GotoLineCol(line, col)
-					}
+	for _, w := range e.allWindows() {
+		if w.GetFilename() == full {
+			e.ActivateWindow(w)
+			if line >= 0 {
+				if tv := w.bodyTextView(); tv != nil {
+					tv.GotoLineCol(line, col)
 				}
-				return
 			}
+			return
 		}
 	}
 
@@ -351,13 +345,9 @@ func (e *Editor) cmdDel(win *Window) {
 	if target == nil {
 		return
 	}
-
-	if target.IsDirty() && !target.Warned() {
-		target.Warn()
-		e.showError(target.parent, target, "", target.GetFilename()+" modified\n")
+	if !e.warnDirty(target.parent, target, []*Window{target}) {
 		return
 	}
-
 	e.RemoveWindow(target)
 }
 
@@ -404,23 +394,9 @@ func (e *Editor) cmdDelcol(col *Column, win *Window) {
 		return
 	}
 
-	var dirty []*Window
-	for _, w := range target.windows {
-		if w.IsDirty() && !w.Warned() {
-			dirty = append(dirty, w)
-		}
-	}
-
-	if len(dirty) > 0 {
-		msg := ""
-		for _, w := range dirty {
-			w.Warn()
-			msg += w.GetFilename() + " modified\n"
-		}
-		e.showError(target, nil, "", msg)
+	if !e.warnDirty(target, nil, target.windows) {
 		return
 	}
-
 	e.RemoveColumn(target)
 }
 
@@ -712,11 +688,9 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 	}
 	errName := filepath.Join(dir, "+Errors")
 
-	for _, c := range e.columns {
-		for _, w := range c.windows {
-			if w.kind == WinOut && w.GetFilename() == errName {
-				return w
-			}
+	for _, w := range e.allWindows() {
+		if w.kind == WinOut && w.GetFilename() == errName {
+			return w
 		}
 	}
 
@@ -726,6 +700,35 @@ func (e *Editor) findOrCreateErrorWindow(col *Column, win *Window, dir string) *
 	e.ActivateWindow(newWin)
 	targetCol.Resize(targetCol.x, targetCol.y, targetCol.w, targetCol.h)
 	return newWin
+}
+
+func (e *Editor) allWindows() []*Window {
+	var ws []*Window
+	for _, col := range e.columns {
+		ws = append(ws, col.windows...)
+	}
+	return ws
+}
+
+// warnDirty checks windows for unsaved changes. If any are dirty and unwarned
+// it warns them, shows an error, and returns false. Returns true if safe to proceed.
+func (e *Editor) warnDirty(col *Column, win *Window, windows []*Window) bool {
+	var dirty []*Window
+	for _, w := range windows {
+		if w.IsDirty() && !w.Warned() {
+			dirty = append(dirty, w)
+		}
+	}
+	if len(dirty) == 0 {
+		return true
+	}
+	var msg strings.Builder
+	for _, w := range dirty {
+		w.Warn()
+		msg.WriteString(w.GetFilename() + " modified\n")
+	}
+	e.showError(col, win, "", msg.String())
+	return false
 }
 
 func (e *Editor) appendToErrorWindow(col *Column, win *Window, msg string) {

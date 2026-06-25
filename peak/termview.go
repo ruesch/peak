@@ -35,6 +35,7 @@ type TermView struct {
 	buffer        *Buffer
 	bufferDirty   bool
 
+	cmd          string       // command used to start the terminal, for session save
 	OnCWD        func(string) // called on main goroutine with decoded absolute path; set by owner
 	onCWDStarted bool         // true once OnCWD has been called at least once
 }

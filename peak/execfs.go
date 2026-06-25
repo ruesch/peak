@@ -204,26 +204,24 @@ func (f *bindFile) WriteString(s string) (int, error) { return f.WriteAt([]byte(
 func indexSnap(editor *Editor) []byte {
 	var sb strings.Builder
 	editor.Call(func() {
-		for _, col := range editor.columns {
-			for _, win := range col.windows {
-				win.lk.Lock()
-				tagLen := win.tag.buffer.Len()
-				bodyLen := win.body.GetBuffer().Len()
-				isDir, isDirty := 0, 0
-				if win.kind == WinDir {
-					isDir = 1
-				}
-				if win.IsDirty() {
-					isDirty = 1
-				}
-				tag := win.tag.buffer.GetText()
-				win.lk.Unlock()
-				if i := strings.IndexByte(tag, '\n'); i >= 0 {
-					tag = tag[:i]
-				}
-				fmt.Fprintf(&sb, "%11d %11d %11d %11d %11d %s\n",
-					win.ID, tagLen, bodyLen, isDir, isDirty, tag)
+		for _, win := range editor.allWindows() {
+			win.lk.Lock()
+			tagLen := win.tag.buffer.Len()
+			bodyLen := win.body.GetBuffer().Len()
+			isDir, isDirty := 0, 0
+			if win.kind == WinDir {
+				isDir = 1
 			}
+			if win.IsDirty() {
+				isDirty = 1
+			}
+			tag := win.tag.buffer.GetText()
+			win.lk.Unlock()
+			if i := strings.IndexByte(tag, '\n'); i >= 0 {
+				tag = tag[:i]
+			}
+			fmt.Fprintf(&sb, "%11d %11d %11d %11d %11d %s\n",
+				win.ID, tagLen, bodyLen, isDir, isDirty, tag)
 		}
 	})
 	return []byte(sb.String())

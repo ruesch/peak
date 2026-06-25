@@ -589,23 +589,19 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 			return addr, true
 		}
 		// Find window by name: exact match first
-		for _, col := range ctx.Editor.columns {
-			for _, win := range col.windows {
-				if win.GetFilename() == target {
-					ctx.Window = win
-					ctx.Buffer = win.body.GetBuffer()
-					return Range{0, 0}, true
-				}
+		for _, win := range ctx.Editor.allWindows() {
+			if win.GetFilename() == target {
+				ctx.Window = win
+				ctx.Buffer = win.body.GetBuffer()
+				return Range{0, 0}, true
 			}
 		}
 		// Partial match
-		for _, col := range ctx.Editor.columns {
-			for _, win := range col.windows {
-				if strings.Contains(win.GetFilename(), target) {
-					ctx.Window = win
-					ctx.Buffer = win.body.GetBuffer()
-					return Range{0, 0}, true
-				}
+		for _, win := range ctx.Editor.allWindows() {
+			if strings.Contains(win.GetFilename(), target) {
+				ctx.Window = win
+				ctx.Buffer = win.body.GetBuffer()
+				return Range{0, 0}, true
 			}
 		}
 		if ctx.Out != nil {
@@ -771,11 +767,9 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 			ctx.Editor.Execute(nil, ctx.Window, "Del")
 		} else {
 			for _, f := range files {
-				for _, col := range ctx.Editor.columns {
-					for _, win := range col.windows {
-						if win.GetFilename() == f {
-							ctx.Editor.Execute(col, win, "Del")
-						}
+				for _, win := range ctx.Editor.allWindows() {
+					if win.GetFilename() == f {
+						ctx.Editor.Execute(win.parent, win, "Del")
 					}
 				}
 			}
@@ -791,33 +785,31 @@ func (cmd *Cmd) Execute(ctx *Context, dot Range) (Range, bool) {
 				return addr, false
 			}
 		}
-		for _, col := range ctx.Editor.columns {
-			for _, win := range col.windows {
-				filename := win.GetFilename()
-				var match bool
-				if re == nil {
-					match = true // X with no pattern → all files
-				} else {
-					match = re.MatchString(filename)
+		for _, win := range ctx.Editor.allWindows() {
+			filename := win.GetFilename()
+			var match bool
+			if re == nil {
+				match = true // X with no pattern → all files
+			} else {
+				match = re.MatchString(filename)
+			}
+			if (cmd.cmdc == 'X' && match) || (cmd.cmdc == 'Y' && !match) {
+				subLog := &Elog{}
+				buf := win.body.GetBuffer()
+				if buf == nil {
+					continue
 				}
-				if (cmd.cmdc == 'X' && match) || (cmd.cmdc == 'Y' && !match) {
-					subLog := &Elog{}
-					buf := win.body.GetBuffer()
-					if buf == nil {
-						continue
-					}
-					if win.kind == WinTerm {
-						continue
-					}
-					subCtx := &Context{Editor: ctx.Editor, Column: col, Window: win, Buffer: buf, Out: ctx.Out, Log: subLog}
-					subDot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
-					if buf.selection.Active {
-						s, e := buf.selection.Ordered()
-						subDot = Range{buf.CursorToRuneOffset(s), buf.CursorToRuneOffset(e)}
-					}
-					cmd.cmd.Execute(subCtx, subDot)
-					subLog.Apply(buf)
+				if win.kind == WinTerm {
+					continue
 				}
+				subCtx := &Context{Editor: ctx.Editor, Column: win.parent, Window: win, Buffer: buf, Out: ctx.Out, Log: subLog}
+				subDot := Range{buf.CursorToRuneOffset(buf.cursor), buf.CursorToRuneOffset(buf.cursor)}
+				if buf.selection.Active {
+					s, e := buf.selection.Ordered()
+					subDot = Range{buf.CursorToRuneOffset(s), buf.CursorToRuneOffset(e)}
+				}
+				cmd.cmd.Execute(subCtx, subDot)
+				subLog.Apply(buf)
 			}
 		}
 		return addr, true

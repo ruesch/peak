@@ -102,29 +102,44 @@ func (c *Column) contentInsertPos() (idx int, emptyH int) {
 	return len(c.windows), 0
 }
 
-func (c *Column) AddWindow(tagText, bodyText string) *Window {
+// AddWindow creates a file/dir window. With a preset the content is restored
+// atomically and the window is appended in session order; without one the
+// normal smart-insertion with space-stealing is used.
+func (c *Column) AddWindow(tagText, bodyText string, preset ...*WindowSession) *Window {
 	if tagText == "" {
 		tagText = " ./untitled.txt Get Put Undo Redo Snarf Zerox Del "
 	}
-
 	c.maximized = nil
 	newWin := NewWindow(tagText, bodyText, c, c.editor, c.x, c.y, c.w, 0, c.onExec)
 	newWin.ID = c.editor.nextWinID
 	c.editor.nextWinID++
 
-	insertIdx, emptyH := c.contentInsertPos()
-	if emptyH > 0 {
-		src := c.windows[insertIdx-1]
-		src.explicitHeight = src.h - emptyH
-		newWin.explicitHeight = emptyH
+	var ws *WindowSession
+	if len(preset) > 0 {
+		ws = preset[0]
 	}
-	c.windows = slices.Insert(c.windows, insertIdx, newWin)
-
+	if ws != nil {
+		newWin.applyPreset(ws)
+		if ws.HeightPct > 0 && c.h > 0 {
+			newWin.explicitHeight = max(newWin.MinSize(), ws.HeightPct*c.h/100)
+		}
+		c.windows = append(c.windows, newWin)
+	} else {
+		insertIdx, emptyH := c.contentInsertPos()
+		if emptyH > 0 {
+			src := c.windows[insertIdx-1]
+			src.explicitHeight = src.h - emptyH
+			newWin.explicitHeight = emptyH
+		}
+		c.windows = slices.Insert(c.windows, insertIdx, newWin)
+	}
 	c.editor.ninep.MountWindow(newWin)
 	return newWin
 }
 
-func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
+// AddTermWindow creates a terminal window. An optional preset sets the initial
+// height from the saved session.
+func (c *Column) AddTermWindow(tagText, cmd, dir string, preset ...*WindowSession) (*Window, error) {
 	if tagText == "" {
 		var name string
 		if cmd == "" {
@@ -144,6 +159,9 @@ func (c *Column) AddTermWindow(tagText, cmd, dir string) (*Window, error) {
 	}
 	newWin.ID = c.editor.nextWinID
 	c.editor.nextWinID++
+	if len(preset) > 0 && preset[0] != nil && preset[0].HeightPct > 0 && c.h > 0 {
+		newWin.explicitHeight = max(newWin.MinSize(), preset[0].HeightPct*c.h/100)
+	}
 	c.windows = append(c.windows, newWin)
 	c.editor.ninep.MountWindow(newWin)
 	return newWin, nil
